@@ -1,13 +1,1983 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>audiocraft</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Podcast App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        /* 隱藏捲軸但保持可捲動 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        body {
+            background: radial-gradient(circle at 30% 20%, #eef2ff 0%, #e5e7eb 55%, #dfe3e9 100%);
+            display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* 視圖切換動畫 */
+        .view-section { display: none; animation: fadeIn 0.3s ease-in-out; }
+        .view-section.active { display: flex; }
+
+        /* Modal 動畫 (由下而上 / 由右至左) */
+        .modal-enter { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); transform: translateY(100%); }
+        .modal-enter.open { transform: translateY(0); }
+        .modal-slide-left { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); transform: translateX(100%); }
+        .modal-slide-left.open { transform: translateX(0); }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes bounce-slow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+        @keyframes pulseGlow { 0%, 100% { box-shadow: 0 0 0 0 rgba(0,0,0,0.16); } 50% { box-shadow: 0 0 0 6px rgba(0,0,0,0); } }
+
+        /* 生成中卡片：加一點呼吸感的光暈，讓「正在跑」這件事更明顯 */
+        .generating-card { animation: pulseGlow 2.2s ease-in-out infinite; }
+
+        /* 滑桿 (Range Slider) 樣式 - 已調小圓圈 */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #000000; cursor: pointer; margin-top: -5px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #e5e7eb; border-radius: 2px; }
+
+        /* Toggle Switch 樣式 */
+        .toggle-checkbox { left: 0; }
+        .toggle-checkbox:checked { left: auto; right: 0; border-color: #000000; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #000000; }
+    </style>
+</head>
+<body>
+
+<!-- 全域 Toast 提示元件 -->
+<div id="toast" class="fixed top-10 left-1/2 transform -translate-x-1/2 opacity-0 bg-black text-white px-5 py-3 rounded-full shadow-2xl text-sm font-bold flex items-center gap-2 transition-all duration-300 pointer-events-none z-[100]">
+    <i class="fa-solid fa-circle-check text-green-400"></i> <span id="toast-msg">通知</span>
+</div>
+
+<!-- 手機模擬框架 -->
+<div class="w-full h-full sm:w-[400px] sm:h-[800px] sm:rounded-[2.5rem] sm:border-[8px] sm:border-black sm:shadow-2xl bg-white relative overflow-hidden flex flex-col">
+
+    <!-- 視圖：登入與註冊 -->
+    <div id="view-auth" class="view-section active h-full flex-col p-8 justify-center bg-white z-10">
+        <div class="text-center mb-10">
+            <div class="w-20 h-20 bg-black rounded-3xl mx-auto mb-4 flex items-center justify-center shadow-lg">
+                <i class="fa-solid fa-headphones-simple text-4xl text-white"></i>
+            </div>
+            <h1 class="text-3xl font-bold text-gray-900">AudioCraft</h1>
+            <p class="text-gray-500 text-sm mt-2">專屬你的 AI 語音代理人</p>
+        </div>
+        
+        <div id="auth-login-form" class="flex flex-col">
+            <input type="email" placeholder="Email" class="w-full p-4 mb-4 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-500">
+            <input type="password" placeholder="密碼" class="w-full p-4 mb-6 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-500">
+            <button onclick="login()" class="w-full bg-black text-white font-bold p-4 rounded-xl mb-4 hover:bg-black">登入</button>
+            <p class="text-center text-sm text-gray-500">還沒有帳號？ <span class="text-gray-900 cursor-pointer font-bold" onclick="toggleAuth('register')">立即註冊</span></p>
+        </div>
+
+        <div id="auth-register-form" class="hidden flex-col">
+            <input type="text" placeholder="顯示名稱" class="w-full p-4 mb-4 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-500">
+            <input type="email" placeholder="Email" class="w-full p-4 mb-4 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-500">
+            <input type="password" placeholder="密碼" class="w-full p-4 mb-6 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-500">
+            <button onclick="register()" class="w-full bg-black text-white font-bold p-4 rounded-xl mb-4 hover:bg-black">註冊</button>
+            <p class="text-center text-sm text-gray-500">已有帳號？ <span class="text-gray-900 cursor-pointer font-bold" onclick="toggleAuth('login')">返回登入</span></p>
+        </div>
+    </div>
+
+    <!-- 視圖：首次興趣選擇 -->
+    <div id="view-onboarding" class="view-section h-full flex-col bg-white z-10 p-6 pt-16">
+        <h2 class="text-2xl font-bold text-gray-900 mb-2">選擇關注領域</h2>
+        <p class="text-gray-500 mb-6 text-sm">請至少選擇 3 個，我們將為您推薦專屬話題。</p>
+        <div class="grid grid-cols-2 gap-3 mb-auto overflow-y-auto no-scrollbar pb-10">
+            <button class="interest-btn border border-gray-200 p-4 rounded-xl text-left font-medium text-gray-700" onclick="toggleOnboardInterest(this)">🚀 科技</button>
+            <button class="interest-btn border border-gray-200 p-4 rounded-xl text-left font-medium text-gray-700" onclick="toggleOnboardInterest(this)">📈 財經</button>
+            <button class="interest-btn border border-gray-200 p-4 rounded-xl text-left font-medium text-gray-700" onclick="toggleOnboardInterest(this)">🌎 國際</button>
+            <button class="interest-btn border border-gray-200 p-4 rounded-xl text-left font-medium text-gray-700" onclick="toggleOnboardInterest(this)">🎬 娛樂</button>
+            <button class="interest-btn border border-gray-200 p-4 rounded-xl text-left font-medium text-gray-700" onclick="toggleOnboardInterest(this)">政治</button>
+            <button class="interest-btn border border-gray-200 p-4 rounded-xl text-left font-medium text-gray-700" onclick="toggleOnboardInterest(this)">健康</button>
+        </div>
+        <button id="btn-finish-onboard" disabled onclick="finishOnboarding()" class="w-full bg-gray-300 text-white font-bold p-4 rounded-xl transition-colors mt-auto mb-6">至少選擇 3 個</button>
+    </div>
+
+    <!-- 視圖：App 主畫面 -->
+    <div id="view-main" class="view-section h-full flex-col bg-gray-50 relative pb-[70px]">
+        
+        <!-- Tab: 首頁 (Home) -->
+        <div id="tab-home" class="tab-content h-full flex-col overflow-y-auto no-scrollbar p-5 pt-12 pb-32 relative">
+            <header class="flex justify-between items-start mb-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-900">9月24日 星期四</h2>
+                    <p class="text-sm text-gray-500 mt-1">今日播放清單</p>
+                </div>
+                <button onclick="switchTab('profile')" class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-900 font-bold" aria-label="個人頁面">D</button>
+            </header>
+
+            <div class="mb-8 space-y-6">
+                <!-- ========== 排程 區塊 ========== -->
+                <section>
+                    <button class="flex items-center gap-2 mb-2.5 w-full" onclick="goCreateSchedule()">
+                        <i class="fa-solid fa-calendar-check text-[#1D4ED8] text-xs"></i>
+                        <h3 class="text-xs font-bold text-[#1D4ED8] tracking-wider">排程</h3>
+                        <div class="flex-1 h-px bg-[#1D4ED8]/15"></div>
+                        <i class="fa-solid fa-chevron-right text-[#1D4ED8]/45 text-[10px]"></i>
+                    </button>
+                    <div class="space-y-2">
+                        <!-- 07:30・已完成 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer" onclick="toggleSources('src-0730')">
+                            <div class="w-11 flex-shrink-0 text-right pt-3"><span class="text-sm font-bold text-gray-700">07:30</span></div>
+                            <div class="w-1 rounded-full bg-[#1D4ED8] flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-white rounded-xl shadow-md p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <h4 class="font-bold text-sm text-gray-900 truncate">通勤總經快訊</h4>
+                                    <p class="text-[11px] text-gray-400">5 mins</p>
+                                </div>
+                                <button onclick="event.stopPropagation(); playEpisode('通勤總經快訊', '排程 · 設定 07:30 · 5 mins', 'schedule')" class="w-9 h-9 bg-[#1D4ED8] rounded-full flex items-center justify-center text-white flex-shrink-0 shadow ml-2"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>
+                            </div>
+                        </div>
+                        <div id="src-0730" class="hidden pl-[60px] pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">本集使用的新聞</p>
+                                <p><a href="https://www.google.com/search?q=道瓊指數創歷史新高，科技股領漲&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・道瓊指數創歷史新高，科技股領漲 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=Fed+官員談話透露降息訊號&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・Fed 官員談話透露降息訊號 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=美元指數走弱，新興市場資金回流&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・美元指數走弱，新興市場資金回流 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+
+                        <!-- 08:00・已完成 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer" onclick="toggleSources('src-0800')">
+                            <div class="w-11 flex-shrink-0 text-right pt-3"><span class="text-sm font-bold text-gray-700">08:00</span></div>
+                            <div class="w-1 rounded-full bg-[#1D4ED8] flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-white rounded-xl shadow-md p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <h4 class="font-bold text-sm text-gray-900 truncate">科技早報</h4>
+                                    <p class="text-[11px] text-gray-400">8 mins</p>
+                                </div>
+                                <button onclick="event.stopPropagation(); playEpisode('科技早報', '排程 · 設定 08:00 · 8 mins', 'schedule')" class="w-9 h-9 bg-[#1D4ED8] rounded-full flex items-center justify-center text-white flex-shrink-0 shadow ml-2"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>
+                            </div>
+                        </div>
+                        <div id="src-0800" class="hidden pl-[60px] pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">本集使用的新聞</p>
+                                <p><a href="https://www.google.com/search?q=台積電法說會：2 奈米量產時程曝光&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・台積電法說會：2 奈米量產時程曝光 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=AI+新創募資動向：東南亞資金加碼&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・AI 新創募資動向：東南亞資金加碼 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+
+                        <!-- 18:00・生成中：貼平、灰階 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer opacity-70" onclick="toggleSources('src-1800')">
+                            <div class="w-11 flex-shrink-0 text-right pt-3"><span class="text-sm font-bold text-gray-400">18:00</span></div>
+                            <div class="w-1 rounded-full bg-gray-300 flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-gray-50 rounded-xl p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <span class="text-[10px] text-gray-400 font-bold"><i class="fa-solid fa-circle-notch fa-spin"></i> 生成中</span>
+                                    <h4 class="font-bold text-sm text-gray-500 truncate mt-0.5">晚間國際新聞回顧</h4>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="src-1800" class="hidden pl-[60px] pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">正在使用這些新聞生成</p>
+                                <p><a href="https://www.google.com/search?q=中東情勢牽動油價，布蘭特原油走高&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・中東情勢牽動油價，布蘭特原油走高 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=美國總統大選首場辯論，經濟政策交鋒&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・美國總統大選首場辯論，經濟政策交鋒 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========== 單集 區塊 ========== -->
+                <section>
+                    <button class="flex items-center gap-2 mb-2.5 w-full" onclick="goCreateSingle()">
+                        <i class="fa-solid fa-microphone-lines text-[#0EA5E9] text-xs"></i>
+                        <h3 class="text-xs font-bold text-[#0EA5E9] tracking-wider">單集</h3>
+                        <div class="flex-1 h-px bg-[#0EA5E9]/15"></div>
+                        <i class="fa-solid fa-chevron-right text-[#0EA5E9]/45 text-[10px]"></i>
+                    </button>
+                    <div id="home-single-list" class="space-y-2">
+                        <!-- 已完成 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer" onclick="toggleSources('src-single-done')">
+                            <div class="w-1 rounded-full bg-[#0EA5E9] flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-white rounded-xl shadow-md p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <h4 class="font-bold text-sm text-gray-900 truncate">輝達財報開獎分析</h4>
+                                    <p class="text-[11px] text-gray-400">10 mins</p>
+                                </div>
+                                <button onclick="event.stopPropagation(); playEpisode('輝達財報開獎分析', '單集 · 10 mins', 'single')" class="w-9 h-9 bg-[#0EA5E9] rounded-full flex items-center justify-center text-white flex-shrink-0 shadow ml-2"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>
+                            </div>
+                        </div>
+                        <div id="src-single-done" class="hidden pl-4 pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">本集使用的新聞</p>
+                                <p><a href="https://www.google.com/search?q=輝達+Q3+財報擊敗預期，資料中心營收創新高&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・輝達 Q3 財報擊敗預期，資料中心營收創新高 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=AI+晶片龍頭營收翻倍，盤後股價小幅震盪&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・AI 晶片龍頭營收翻倍，盤後股價小幅震盪 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+
+                        <!-- 生成中 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer opacity-70" onclick="toggleSources('src-single-gen')">
+                            <div class="w-1 rounded-full bg-gray-300 flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-gray-50 rounded-xl p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <span class="text-[10px] text-gray-400 font-bold"><i class="fa-solid fa-circle-notch fa-spin"></i> 生成中</span>
+                                    <h4 class="font-bold text-sm text-gray-500 truncate mt-0.5">OpenAI o1 模型深度解析</h4>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="src-single-gen" class="hidden pl-4 pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">正在使用這些新聞生成</p>
+                                <p><a href="https://www.google.com/search?q=OpenAI+發表+o1+模型，具備強大推理能力&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・OpenAI 發表 o1 模型，具備強大推理能力 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========== 推薦 區塊 ========== -->
+                <section>
+                    <div class="flex items-center gap-2 mb-2.5">
+                        <i class="fa-solid fa-sparkles text-[#F59E0B] text-xs"></i>
+                        <h3 class="text-xs font-bold text-[#F59E0B] tracking-wider">推薦</h3>
+                        <div class="flex-1 h-px bg-[#F59E0B]/15"></div>
+                    </div>
+                    <div class="space-y-2">
+                        <!-- 蘋果秋季發表會 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer" onclick="toggleSources('src-reco-1')">
+                            <div class="w-1 rounded-full bg-[#F59E0B]/45 flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-white rounded-xl shadow-md p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <h4 class="font-bold text-sm text-gray-900 truncate">蘋果秋季發表會</h4>
+                                    <p class="text-[11px] text-gray-400">12 mins</p>
+                                </div>
+                                <button onclick="event.stopPropagation(); playEpisode('蘋果秋季發表會', 'AI 推薦 · 依據：科技', 'reco')" class="w-9 h-9 bg-[#F59E0B] rounded-full flex items-center justify-center text-white flex-shrink-0 shadow ml-2"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>
+                            </div>
+                        </div>
+                        <div id="src-reco-1" class="hidden pl-4 pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">推薦依據的新聞</p>
+                                <p><a href="https://www.google.com/search?q=蘋果發表會邀請函釋出，外界揣測新機陣容&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・蘋果發表會邀請函釋出，外界揣測新機陣容 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=供應鏈傳出新款晶片備貨動態&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・供應鏈傳出新款晶片備貨動態 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+
+                        <!-- 全球降息啟動 -->
+                        <div class="flex items-stretch gap-3 cursor-pointer" onclick="toggleSources('src-reco-2')">
+                            <div class="w-1 rounded-full bg-[#F59E0B]/45 flex-shrink-0"></div>
+                            <div class="flex-1 min-w-0 bg-white rounded-xl shadow-md p-3 flex items-center justify-between">
+                                <div class="min-w-0">
+                                    <h4 class="font-bold text-sm text-gray-900 truncate">全球降息啟動</h4>
+                                    <p class="text-[11px] text-gray-400">15 mins</p>
+                                </div>
+                                <button onclick="event.stopPropagation(); playEpisode('全球降息啟動', 'AI 推薦 · 依據：財經', 'reco')" class="w-9 h-9 bg-[#F59E0B] rounded-full flex items-center justify-center text-white flex-shrink-0 shadow ml-2"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>
+                            </div>
+                        </div>
+                        <div id="src-reco-2" class="hidden pl-4 pr-1 pb-1 pt-1">
+                            <div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">
+                                <p class="font-bold text-gray-600 mb-1">推薦依據的新聞</p>
+                                <p><a href="https://www.google.com/search?q=全球央行啟動降息循環，資金板塊挪移&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・全球央行啟動降息循環，資金板塊挪移 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                                <p><a href="https://www.google.com/search?q=聯準會宣布降息兩碼，帶動全球股債市波動&tbm=nws" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・聯準會宣布降息兩碼，帶動全球股債市波動 <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- 懸浮播放橫幅 (Now Playing Banner) - 絕對固定在底部導航列上方，改成白色版本 -->
+        <!-- bottom-[82px] 稍微浮起來一點點留白 -->
+        <div id="now-playing-banner" class="absolute bottom-[82px] left-4 right-4 bg-white text-gray-900 border border-gray-200 rounded-2xl p-3 shadow-xl cursor-pointer z-20 transition-transform hover:scale-[1.02]" onclick="openModal('modal-player')">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="w-10 h-10 bg-gradient-to-br from-gray-700 to-black rounded-lg flex-shrink-0 flex items-center justify-center shadow-inner">
+                        <!-- 動態聲波 Icon -->
+                        <div class="flex gap-0.5 h-4 items-end">
+                            <div class="w-1 bg-white rounded-t-sm animate-[bounce_1s_infinite] h-2"></div>
+                            <div class="w-1 bg-white rounded-t-sm animate-[bounce_1s_infinite_0.2s] h-4"></div>
+                            <div class="w-1 bg-white rounded-t-sm animate-[bounce_1s_infinite_0.4s] h-3"></div>
+                        </div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-[10px] text-gray-500 font-bold mb-0.5 uppercase tracking-wider">正在聆聽</p>
+                        <h5 id="now-playing-title" class="text-sm font-bold truncate">輝達財報開獎分析</h5>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 pr-1">
+                    <button class="text-gray-900 text-xl hover:text-gray-600 transition-colors" onclick="event.stopPropagation();"><i class="fa-solid fa-pause"></i></button>
+                    <button class="text-gray-400 text-sm hover:text-gray-900 transition-colors w-6 h-6 flex items-center justify-center" onclick="event.stopPropagation(); dismissNowPlaying();" aria-label="關閉播放橫幅"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <!-- 進度條 -->
+            <div class="mt-2 h-1 bg-gray-200 rounded-full overflow-hidden">
+                <div id="now-playing-progress" class="h-full bg-black rounded-full" style="width:30%"></div>
+            </div>
+        </div>
+
+        <!-- Tab: 行事曆 (Calendar) -->
+        <div id="tab-calendar" class="tab-content hidden h-full flex-col bg-white pt-12 pb-[70px] relative">
+            <div class="px-4 mb-2 flex justify-between items-center shrink-0">
+                <div class="flex items-center gap-1">
+                    <button id="cal-prev-btn" onclick="shiftCalMonth(-1)" class="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700"><i class="fa-solid fa-chevron-left text-xs"></i></button>
+                    <h2 class="text-base font-bold text-gray-800 tracking-wide w-[108px] text-center whitespace-nowrap flex items-center justify-center">
+                        <button type="button" onclick="document.getElementById('cal-year-select').showPicker()" class="hover:text-gray-500">
+                            <span id="cal-year-display">2026</span>年
+                        </button>
+                        <select id="cal-year-select" onchange="jumpToCalYear(this.value)" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></select>
+                        <span id="cal-month-num-label">9</span>月
+                    </h2>
+                    <button id="cal-next-btn" onclick="shiftCalMonth(1)" class="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700"><i class="fa-solid fa-chevron-right text-xs"></i></button>
+                </div>
+                <!-- 週/月切換 -->
+                <div class="flex bg-gray-100 p-1 rounded-lg">
+                    <button id="cal-view-btn-week" class="text-[10px] font-bold bg-white text-gray-900 shadow-sm px-3 py-1 rounded" onclick="toggleCalView('week')">週</button>
+                    <button id="cal-view-btn-month" class="text-[10px] font-bold text-gray-500 px-3 py-1 rounded" onclick="toggleCalView('month')">月</button>
+                </div>
+            </div>
+
+            <!-- 週視圖：固定高度的點點容器避免浮動 -->
+            <div id="cal-week-view" class="px-2 mb-2 shrink-0 border-b border-gray-100 pb-2">
+                <div class="flex justify-between items-center text-center">
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="20" data-y="2026" data-m="8" onclick="selectCalDay(20,2026,8)" ondblclick="openCreateForDay(20,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">日</span><div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm text-gray-700">20</div>
+                        <div class="h-2 mt-0.5 w-full"></div>
+                    </div>
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="21" data-y="2026" data-m="8" onclick="selectCalDay(21,2026,8)" ondblclick="openCreateForDay(21,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">一</span><div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm text-gray-700">21</div>
+                        <div class="h-2 mt-0.5 w-full flex gap-0.5 justify-center items-start"><span class="w-1 h-1 rounded-full bg-[#1D4ED8]"></span></div>
+                    </div>
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="22" data-y="2026" data-m="8" onclick="selectCalDay(22,2026,8)" ondblclick="openCreateForDay(22,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">二</span><div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm text-gray-700">22</div>
+                        <div class="h-2 mt-0.5 w-full"></div>
+                    </div>
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="23" data-y="2026" data-m="8" onclick="selectCalDay(23,2026,8)" ondblclick="openCreateForDay(23,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">三</span><div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm text-gray-700">23</div>
+                        <div class="h-2 mt-0.5 w-full"></div>
+                    </div>
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="24" data-y="2026" data-m="8" data-today="true" onclick="selectCalDay(24,2026,8)" ondblclick="openCreateForDay(24,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">四</span>
+                        <div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-gray-700">24</div>
+                        <div class="h-2 mt-0.5 w-full flex justify-center items-start"><div class="w-1.5 h-1.5 rounded-full bg-red-500"></div></div>
+                    </div>
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="25" data-y="2026" data-m="8" onclick="selectCalDay(25,2026,8)" ondblclick="openCreateForDay(25,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">五</span><div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm text-gray-700">25</div>
+                        <div class="h-2 mt-0.5 w-full"></div>
+                    </div>
+                    <div class="cal-day-cell flex flex-col items-center flex-1 cursor-pointer py-1" data-day="26" data-y="2026" data-m="8" onclick="selectCalDay(26,2026,8)" ondblclick="openCreateForDay(26,2026,8)">
+                        <span class="text-[10px] text-gray-500 mb-1">六</span><div class="cal-day-num w-8 h-8 rounded-full flex items-center justify-center text-sm text-gray-700">26</div>
+                        <div class="h-2 mt-0.5 w-full"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 月視圖 -->
+            <div id="cal-month-view" class="hidden px-2 mb-2 shrink-0 border-b border-gray-100 pb-2">
+                <div class="grid grid-cols-7 text-center mb-1">
+                    <div class="text-[10px] text-gray-500">日</div><div class="text-[10px] text-gray-500">一</div><div class="text-[10px] text-gray-500">二</div><div class="text-[10px] text-gray-500">三</div><div class="text-[10px] text-gray-500">四</div><div class="text-[10px] text-gray-500">五</div><div class="text-[10px] text-gray-500">六</div>
+                </div>
+                <div id="cal-month-grid" class="grid grid-cols-7 gap-y-2 text-center"></div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto no-scrollbar bg-gray-50 px-4 pt-4 pb-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 id="cal-day-label" class="text-sm font-bold text-gray-800">9月24日 星期四</h3>
+                    <button id="cal-add-btn" onclick="openCreateModal('today', 24, 2026, 8)" class="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center shadow" aria-label="新增"><i class="fa-solid fa-plus text-xs"></i></button>
+                </div>
+                <div id="cal-day-list"></div>
+            </div>
+        </div>
+
+        <!-- Tab: 我的播客 (My Podcasts) -->
+        <div id="tab-mypodcasts" class="tab-content hidden h-full flex-col overflow-y-auto no-scrollbar p-5 pt-12 pb-[70px] relative">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-900">我的播客</h2>
+                <button onclick="switchTab('profile')" class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-900 font-bold flex-shrink-0" aria-label="個人頁面">D</button>
+            </div>
+
+            <!-- 資料夾視圖 -->
+            <div class="space-y-3 mb-8">
+                <button class="w-full bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 active:scale-[0.98] transition-transform" onclick="openFolder('排程')">
+                    <div class="w-12 h-12 bg-[#1D4ED8]/10 rounded-xl flex items-center justify-center text-xl text-[#1D4ED8] flex-shrink-0"><i class="fa-solid fa-calendar-check"></i></div>
+                    <div class="flex-1 min-w-0 text-left"><h3 class="font-bold text-gray-800 text-sm">排程</h3><p class="text-[11px] text-gray-400" id="folder-count-schedule">–</p></div>
+                    <i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>
+                </button>
+                <button class="w-full bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 active:scale-[0.98] transition-transform" onclick="openFolder('單集')">
+                    <div class="w-12 h-12 bg-[#0EA5E9]/10 rounded-xl flex items-center justify-center text-xl text-[#0EA5E9] flex-shrink-0"><i class="fa-solid fa-microphone-lines"></i></div>
+                    <div class="flex-1 min-w-0 text-left"><h3 class="font-bold text-gray-800 text-sm">單集</h3><p class="text-[11px] text-gray-400" id="folder-count-single">–</p></div>
+                    <i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>
+                </button>
+                <button class="w-full bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 active:scale-[0.98] transition-transform" onclick="openFolder('推薦')">
+                    <div class="w-12 h-12 bg-[#F59E0B]/10 rounded-xl flex items-center justify-center text-xl text-[#F59E0B] flex-shrink-0"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+                    <div class="flex-1 min-w-0 text-left"><h3 class="font-bold text-gray-800 text-sm">推薦</h3><p class="text-[11px] text-gray-400" id="folder-count-reco">–</p></div>
+                    <i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>
+                </button>
+                <button class="w-full bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 active:scale-[0.98] transition-transform" onclick="openFolder('收藏')">
+                    <div class="w-12 h-12 bg-pink-50 rounded-xl flex items-center justify-center text-xl text-pink-500 flex-shrink-0"><i class="fa-solid fa-heart"></i></div>
+                    <div class="flex-1 min-w-0 text-left"><h3 class="font-bold text-gray-800 text-sm">收藏</h3><p class="text-[11px] text-gray-400" id="folder-count-fav">–</p></div>
+                    <i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>
+                </button>
+            </div>
+
+            <h3 class="font-bold text-gray-900 text-lg mb-3">最近聽過</h3>
+            <div class="space-y-3">
+                <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-500"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                    <div class="flex-1 min-w-0"><h4 class="font-bold text-sm">OpenAI 開發者大會回顧</h4><p class="text-[10px] text-gray-400">單集 • 昨天</p></div>
+                    <button class="fav-btn w-8 h-8 flex items-center justify-center flex-shrink-0 text-gray-300" data-title="OpenAI 開發者大會回顧" onclick="toggleFavorite(this)"><i class="fa-solid fa-heart"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: 個人 (Profile) -->
+        <div id="tab-profile" class="tab-content hidden h-full flex-col overflow-y-auto no-scrollbar p-5 pt-12 pb-[70px]">
+            <button onclick="openEditProfileModal()" class="w-full flex items-center gap-4 mb-8 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center text-gray-900 text-xl font-bold flex-shrink-0" id="profile-avatar-initial">D</div>
+                <div class="flex-1 text-left min-w-0"><h2 id="profile-display-name" class="text-xl font-bold text-gray-900 truncate">Demo</h2><p class="text-xs text-gray-500">demo@example.com</p></div>
+                <i class="fa-solid fa-pen text-gray-300 text-xs flex-shrink-0"></i>
+            </button>
+
+            <!-- 簡潔的黑白灰個人設定 -->
+            <h3 class="font-bold text-gray-900 text-sm mb-3">偏好與設定</h3>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+                <button onclick="switchTab('mypodcasts')" class="w-full flex justify-between items-center p-4 border-b border-gray-50"><div class="flex items-center gap-3"><div class="w-8 h-8 bg-gray-100 text-gray-900 rounded-full flex items-center justify-center"><i class="fa-solid fa-heart"></i></div><span class="font-bold text-sm text-gray-800">我的收藏</span></div><i class="fa-solid fa-chevron-right text-gray-400 text-xs"></i></button>
+                <button onclick="openModal('modal-manage-categories')" class="w-full flex justify-between items-center p-4 border-b border-gray-50"><div class="flex items-center gap-3"><div class="w-8 h-8 bg-gray-100 text-gray-900 rounded-full flex items-center justify-center"><i class="fa-solid fa-tags"></i></div><span class="font-bold text-sm text-gray-800">管理關注分類</span></div><div class="flex items-center gap-2"><span id="followed-categories-count" class="text-xs text-gray-400">3 個分類</span><i class="fa-solid fa-chevron-right text-gray-400 text-xs"></i></div></button>
+                <button onclick="openModal('modal-change-password')" class="w-full flex justify-between items-center p-4"><div class="flex items-center gap-3"><div class="w-8 h-8 bg-gray-100 text-gray-900 rounded-full flex items-center justify-center"><i class="fa-solid fa-lock"></i></div><span class="font-bold text-sm text-gray-800">修改密碼</span></div><i class="fa-solid fa-chevron-right text-gray-400 text-xs"></i></button>
+            </div>
+            <button onclick="logout()" class="w-full p-4 bg-white rounded-2xl shadow-sm border border-gray-100 text-red-500 font-bold">登出帳號</button>
+        </div>
+
+        <!-- 底部 3 個導航 -->
+        <nav class="absolute bottom-0 w-full h-[70px] bg-white border-t border-gray-200 flex justify-around items-center px-2 z-30 pb-2">
+            <button data-tab="home" onclick="switchTab('home')" class="nav-btn text-gray-900 flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-house text-xl"></i><span class="text-[10px] font-bold">首頁</span></button>
+            <button data-tab="calendar" onclick="switchTab('calendar')" class="nav-btn text-gray-400 flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-circle-plus text-xl"></i><span class="text-[10px] font-bold">建立</span></button>
+            <button data-tab="mypodcasts" onclick="switchTab('mypodcasts')" class="nav-btn text-gray-400 flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-folder-open text-xl"></i><span class="text-[10px] font-bold">我的播客</span></button>
+        </nav>
+    </div>
+
+    <!-- Modal: 編輯個人資料（顯示名稱） -->
+    <div id="modal-edit-profile" class="absolute inset-0 bg-gray-50 z-[60] hidden modal-slide-left flex-col">
+        <header class="p-4 bg-white flex items-center gap-4 shrink-0 shadow-sm z-10 sticky top-0">
+            <i class="fa-solid fa-arrow-left text-xl text-gray-600 cursor-pointer p-1" onclick="closeModal('modal-edit-profile')"></i>
+            <h3 class="font-bold text-lg text-gray-900">編輯個人資料</h3>
+        </header>
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <p class="text-xs font-bold text-gray-500 mb-2">顯示名稱</p>
+                <input id="edit-display-name-input" type="text" maxlength="20" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-gray-500 text-gray-800 text-sm font-medium">
+            </div>
+            <button onclick="saveDisplayName()" class="w-full bg-black text-white font-bold py-3 rounded-xl shadow-md active:scale-95 transition-transform">儲存</button>
+        </div>
+    </div>
+
+    <!-- Modal: 修改密碼 -->
+    <div id="modal-change-password" class="absolute inset-0 bg-gray-50 z-[60] hidden modal-slide-left flex-col">
+        <header class="p-4 bg-white flex items-center gap-4 shrink-0 shadow-sm z-10 sticky top-0">
+            <i class="fa-solid fa-arrow-left text-xl text-gray-600 cursor-pointer p-1" onclick="closeModal('modal-change-password')"></i>
+            <h3 class="font-bold text-lg text-gray-900">修改密碼</h3>
+        </header>
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+            <div class="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+                <div>
+                    <p class="text-xs font-bold text-gray-500 mb-2">目前密碼</p>
+                    <input id="current-password-input" type="password" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-gray-500 text-gray-800 text-sm font-medium">
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-gray-500 mb-2">新密碼</p>
+                    <input id="new-password-input" type="password" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-gray-500 text-gray-800 text-sm font-medium">
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-gray-500 mb-2">確認新密碼</p>
+                    <input id="confirm-password-input" type="password" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-gray-500 text-gray-800 text-sm font-medium">
+                </div>
+            </div>
+            <p id="change-password-error" class="hidden text-xs text-red-500 px-1"></p>
+            <button onclick="saveNewPassword()" class="w-full bg-black text-white font-bold py-3 rounded-xl shadow-md active:scale-95 transition-transform">儲存</button>
+        </div>
+    </div>
+
+    <!-- Modal: 管理關注分類 -->
+    <div id="modal-manage-categories" class="absolute inset-0 bg-gray-50 z-[60] hidden modal-slide-left flex-col">
+        <header class="p-4 bg-white flex items-center gap-4 shrink-0 shadow-sm z-10 sticky top-0">
+            <i class="fa-solid fa-arrow-left text-xl text-gray-600 cursor-pointer p-1" onclick="closeModal('modal-manage-categories')"></i>
+            <h3 class="font-bold text-lg text-gray-900">管理關注分類</h3>
+        </header>
+        <div class="flex-1 overflow-y-auto">
+            <div class="bg-white mt-2">
+                <label class="flex justify-between items-center py-3 px-5 border-b border-gray-50"><span class="text-base text-gray-800">台灣</span><div class="relative w-10 h-6"><input type="checkbox" class="followed-cat-toggle toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" checked onchange="updateFollowedCategoriesCount()"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                <label class="flex justify-between items-center py-3 px-5 border-b border-gray-50"><span class="text-base text-gray-800">國際</span><div class="relative w-10 h-6"><input type="checkbox" class="followed-cat-toggle toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" onchange="updateFollowedCategoriesCount()"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                <label class="flex justify-between items-center py-3 px-5 border-b border-gray-50"><span class="text-base text-gray-800">娛樂</span><div class="relative w-10 h-6"><input type="checkbox" class="followed-cat-toggle toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" onchange="updateFollowedCategoriesCount()"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                <label class="flex justify-between items-center py-3 px-5 border-b border-gray-50"><span class="text-base text-gray-800">政治</span><div class="relative w-10 h-6"><input type="checkbox" class="followed-cat-toggle toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" onchange="updateFollowedCategoriesCount()"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                <label class="flex justify-between items-center py-3 px-5 border-b border-gray-50"><span class="text-base text-gray-800">科技</span><div class="relative w-10 h-6"><input type="checkbox" class="followed-cat-toggle toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" checked onchange="updateFollowedCategoriesCount()"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                <label class="flex justify-between items-center py-3 px-5"><span class="text-base text-gray-800">財經</span><div class="relative w-10 h-6"><input type="checkbox" class="followed-cat-toggle toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" checked onchange="updateFollowedCategoriesCount()"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- 統一生成表單 (單集聊天 vs 排程設定) -->
+    <div id="modal-unified-create" class="absolute inset-0 bg-gray-50 z-[50] hidden modal-enter flex-col">
+        <header class="p-4 bg-white border-b border-gray-200 flex items-center justify-between shrink-0 shadow-sm z-10">
+            <div class="flex items-center gap-3">
+                <i class="fa-solid fa-xmark text-xl text-gray-600 cursor-pointer p-1" onclick="resetChatModal(); closeModal('modal-unified-create')"></i>
+                <h3 class="font-bold text-lg" id="create-modal-title">單集生成</h3>
+            </div>
+            <button id="create-save-btn" class="hidden bg-black text-white px-4 py-1.5 rounded-full font-bold text-sm shadow-sm" onclick="showToast('排程已儲存！'); resetChatModal(); closeModal('modal-unified-create');">儲存</button>
+        </header>
+
+        <!-- Mode Toggle：隱藏真實的 Select 覆蓋在標籤上方，解決行動版/桌機版跨平台切換問題 -->
+        <div class="bg-white px-4 py-1.5 shadow-sm z-10 flex items-center gap-2 shrink-0 border-b border-gray-50">
+            <label class="relative flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 transition-colors px-2 py-1 rounded cursor-pointer">
+                <i id="create-mode-icon" class="fa-regular fa-clock text-gray-500 text-[10px]"></i>
+                <span id="create-mode-display" class="text-gray-600 text-[10px] font-bold">今天 · 單集即時生成</span>
+                <i class="fa-solid fa-chevron-down text-gray-400 text-[8px]"></i>
+                <select id="create-mode-select" onchange="handleModeSwitch(this.value)" class="absolute inset-0 opacity-0 w-full h-full cursor-pointer">
+                    <option id="mode-option-today" value="today">今天 · 單集即時生成</option>
+                    <option id="mode-option-future" value="future">建立排程</option>
+                </select>
+            </label>
+        </div>
+        <input type="checkbox" id="immediate-toggle" class="hidden">
+
+        <div class="flex-1 overflow-y-auto no-scrollbar relative bg-gray-50 flex flex-col">
+
+            <!-- ====== 狀態 A：AI 聊天模式 (單集) ====== -->
+            <div id="chat-mode-container" class="flex flex-col h-full p-5 justify-start pb-8">
+                <!-- 對話記錄區塊 -->
+                <div id="chat-messages" class="flex-1 overflow-y-auto no-scrollbar flex flex-col justify-start space-y-4 mb-4">
+                    <!-- AI 氣泡 (固定在最上方) -->
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center shadow flex-shrink-0 text-sm"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+                        <div class="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm border border-gray-100 text-gray-800 text-sm font-medium">
+                            嗨，Demo！準備好製作新的 Podcast 了嗎？告訴我你今天想聽些什麼主題，或是直接從今日新聞庫挑選素材。
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 輸入與新聞捷徑區塊 -->
+                <div class="shrink-0">
+                    <div class="w-full bg-white rounded-2xl p-3 border border-gray-200 shadow-sm relative flex items-center gap-2 mb-3">
+                        <input id="chat-topic-input" type="text" placeholder="輸入你想了解的主題..." class="flex-1 bg-transparent focus:outline-none text-gray-800 font-medium text-sm px-2" onkeydown="if(event.key==='Enter') sendChatMessage();">
+                        <button onclick="sendChatMessage()" class="bg-black text-white w-8 h-8 rounded-full flex items-center justify-center shadow-md active:scale-90 transition-transform flex-shrink-0"><i class="fa-solid fa-arrow-up"></i></button>
+                    </div>
+
+                    <!-- 跳轉新聞選擇：放在輸入框下方作為次要資訊 -->
+                    <div id="news-picker-shortcut" class="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors" onclick="openNewsPicker()">
+                        <div class="flex items-center gap-2 text-gray-900 font-bold text-xs"><i class="fa-regular fa-newspaper"></i> 從今日新聞列表挑選素材</div>
+                        <i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== 狀態 A-2：單集參數設定 (選完文章/主題後、正式生成前) ====== -->
+            <div id="single-params-container" class="hidden flex-col p-4 pb-8 space-y-4">
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <p class="text-xs font-bold text-gray-500 mb-2">播客風格</p>
+                    <div class="flex flex-wrap gap-2">
+                        <button class="style-chip px-3 py-1.5 bg-black text-white border border-black rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'style-chip')">對話式雙人</button>
+                        <button class="style-chip px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'style-chip')">單人講解</button>
+                        <button class="style-chip px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'style-chip')">深度訪談</button>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <p class="text-xs font-bold text-gray-500 mb-2">詳細程度</p>
+                    <div class="flex flex-wrap gap-2">
+                        <button class="detail-chip px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'detail-chip')">精簡</button>
+                        <button class="detail-chip px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'detail-chip')">摘要</button>
+                        <button class="detail-chip px-3 py-1.5 bg-black text-white border border-black rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'detail-chip')">標準</button>
+                        <button class="detail-chip px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="selectChip(this,'detail-chip')">深入分析</button>
+                    </div>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button onclick="backToChat()" class="flex-1 bg-white border border-gray-300 text-gray-700 font-bold py-3 rounded-xl">返回</button>
+                    <button onclick="startGenerationFlow()" class="flex-[2] bg-black text-white font-bold py-3 rounded-xl shadow-md active:scale-95 transition-transform">開始生成</button>
+                </div>
+            </div>
+
+            <!-- ====== 狀態 B：排程表單模式 (Routine) ====== -->
+            <div id="schedule-mode-container" class="hidden flex-col p-4 pb-20 space-y-4">
+                
+                <!-- 時間與重複設定 -->
+                <div class="bg-white rounded-2xl shadow-sm p-4 space-y-4">
+                    <div class="flex justify-between items-center text-sm font-medium text-gray-800">
+                        <button type="button" onclick="document.getElementById('schedule-date-input').showPicker()" class="flex items-center gap-1.5 hover:text-gray-500 transition-colors">
+                            <i class="fa-regular fa-calendar text-gray-400 text-xs"></i>
+                            <span id="schedule-date-label">9月24日星期四</span>
+                            <i class="fa-solid fa-chevron-down text-gray-300 text-[10px]"></i>
+                        </button>
+                        <input type="date" id="schedule-date-input" onchange="onScheduleDateChange(this.value)" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none">
+                        <input type="time" class="bg-transparent outline-none font-bold text-gray-900 text-right" value="08:00">
+                    </div>
+                    <!-- 呼叫進階重複設定 modal -->
+                    <div class="flex justify-between items-center text-sm font-medium text-gray-800 border-t border-gray-100 pt-3 cursor-pointer" onclick="openModal('modal-repeat-settings')">
+                        <div class="flex items-center gap-2"><i class="fa-solid fa-rotate-right text-gray-400"></i> <span id="repeat-summary-text">每週</span></div>
+                        <i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>
+                    </div>
+                </div>
+
+                <!-- 核心內容設定區塊 -->
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <!-- 主題偏好（必填） -->
+                    <div class="mb-3">
+                        <p class="text-xs font-bold text-gray-700 mb-2">主題偏好 <span class="text-gray-400 font-normal">（必填）</span></p>
+                        <textarea id="topic-input" placeholder="例如：今日政策更新與娛樂新聞..." class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 resize-none focus:outline-none focus:border-gray-500 h-20 text-gray-800 text-sm font-medium" oninput="handleTopicInputEdit()"></textarea>
+                        <div class="flex justify-between items-center mt-1.5">
+                            <button id="topic-undo-btn" onclick="undoTopicRefine()" class="hidden text-[10px] text-gray-400 font-bold hover:text-gray-700"><i class="fa-solid fa-rotate-left"></i> 復原成原本的內容</button>
+                            <span class="flex-1"></span>
+                            <button class="text-[10px] bg-[#1D4ED8]/10 text-[#1D4ED8] px-2 py-1 rounded font-bold shadow-sm" onclick="refineTopicSuggestion()"><i class="fa-solid fa-wand-magic-sparkles"></i> 獲取精煉建議</button>
+                        </div>
+                    </div>
+
+                    <!-- 分類（選填，預設收合） -->
+                    <div class="border-t border-gray-100 pt-3">
+                        <button type="button" onclick="toggleCategorySection()" class="w-full flex justify-between items-center">
+                            <span class="text-xs font-bold text-gray-500">沒有想法？點這裡挑分類 <span class="text-gray-400 font-normal">（選填，最多 3 類）</span></span>
+                            <i id="cat-section-chevron" class="fa-solid fa-chevron-down text-gray-300 text-xs transition-transform"></i>
+                        </button>
+                        <div id="cat-section-body" class="hidden mt-3">
+                            <div class="flex flex-wrap gap-2 mb-3">
+                                <button class="cat-chip px-3 py-1 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="toggleCategory(this, '台灣')">台灣</button>
+                                <button class="cat-chip px-3 py-1 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="toggleCategory(this, '國際')">國際</button>
+                                <button class="cat-chip px-3 py-1 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="toggleCategory(this, '娛樂')">娛樂</button>
+                                <button class="cat-chip px-3 py-1 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="toggleCategory(this, '政治')">政治</button>
+                                <button class="cat-chip px-3 py-1 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="toggleCategory(this, '科技')">科技</button>
+                                <button class="cat-chip px-3 py-1 bg-white border border-gray-300 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="toggleCategory(this, '財經')">財經</button>
+                            </div>
+
+                            <!-- 推薦主題 -->
+                            <div id="reco-topic-box" class="bg-gray-50 p-3 rounded-xl border border-gray-100 opacity-40 pointer-events-none transition-opacity">
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-xs font-bold text-gray-900">推薦主題 <span class="text-gray-400 font-normal">（選填，點擊套用）</span></span>
+                                    <button class="text-[10px] text-gray-900 border border-gray-200 bg-white px-2 py-0.5 rounded shadow-sm" onclick="event.stopPropagation(); shuffleRecoTopics()">換一批</button>
+                                </div>
+                                <div id="reco-topic-list" class="flex flex-wrap gap-1.5"></div>
+                                <p id="reco-topic-hint" class="text-[10px] text-gray-400 mt-2">先選上面的分類，才能挑推薦主題</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 參數 Slider 區塊 -->
+                <div class="bg-white rounded-2xl shadow-sm p-4 space-y-6">
+                    <!-- 時長 -->
+                    <div>
+                        <div class="flex justify-between mb-2"><span class="text-sm font-bold text-gray-700">時長（分鐘）</span><span class="text-sm text-gray-900 font-bold bg-gray-50 px-2 py-0.5 rounded" id="val-duration">10 分鐘</span></div>
+                        <input type="range" min="3" max="30" value="10" oninput="document.getElementById('val-duration').innerText = this.value + ' 分鐘'">
+                    </div>
+                    <!-- 文章數 -->
+                    <div>
+                        <div class="flex justify-between mb-2"><span class="text-sm font-bold text-gray-700">文章篇數</span><span class="text-sm text-gray-900 font-bold bg-gray-50 px-2 py-0.5 rounded" id="val-articles">5 篇</span></div>
+                        <input type="range" min="2" max="7" value="5" oninput="document.getElementById('val-articles').innerText = this.value + ' 篇'">
+                    </div>
+                    <!-- 講者人數 (鎖定) -->
+                    <div class="flex justify-between items-center pt-2 border-t border-gray-50">
+                        <span class="text-sm font-bold text-gray-700">講者人數 <span class="text-[10px] text-gray-400 font-normal">（目前僅支援單人）</span></span>
+                        <span class="text-sm bg-gray-100 text-gray-400 px-3 py-1 rounded-lg font-bold">1</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重複設定 Modal -->
+    <div id="modal-repeat-settings" class="absolute inset-0 bg-gray-50 z-[60] hidden modal-slide-left flex-col">
+        <header class="p-4 bg-white flex items-center gap-4 shrink-0 shadow-sm z-10 sticky top-0">
+            <i class="fa-solid fa-arrow-left text-xl text-gray-600 cursor-pointer p-1" onclick="closeModal('modal-repeat-settings')"></i>
+            <h3 class="font-bold text-lg text-gray-900">重複</h3>
+        </header>
+        
+        <div class="flex-1 overflow-y-auto pb-10">
+            <!-- 頻率選擇 -->
+            <div class="bg-white px-5 py-2 mt-2">
+                <div class="flex justify-between items-center py-4 border-b border-gray-100">
+                    <span class="text-base text-gray-800">頻率</span>
+                    <span class="relative inline-flex items-center">
+                        <select id="repeat-freq" class="text-base text-gray-500 bg-transparent outline-none text-right appearance-none pr-5" onchange="handleRepeatFreqChange()">
+                            <option value="none">不重複</option>
+                            <option value="daily">每天</option>
+                            <option value="weekly" selected>每週</option>
+                            <option value="monthly">每月</option>
+                            <option value="yearly">每年</option>
+                        </select>
+                        <i class="fa-solid fa-chevron-down text-gray-300 text-[10px] absolute right-0 pointer-events-none"></i>
+                    </span>
+                </div>
+            </div>
+
+            <!-- 動態區塊：每週 (星期選擇) -->
+            <div id="repeat-weekly-area" class="mt-2 bg-white">
+                <p class="text-xs text-gray-400 px-5 pt-4 pb-2">特定日期：</p>
+                <div class="px-5 pb-2">
+                    <label class="flex justify-between items-center py-3 border-b border-gray-50"><span class="text-base text-gray-800">星期日</span><div class="relative w-10 h-6"><input id="repeat-day-0" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <label class="flex justify-between items-center py-3 border-b border-gray-50"><span class="text-base text-gray-800">星期一</span><div class="relative w-10 h-6"><input id="repeat-day-1" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <label class="flex justify-between items-center py-3 border-b border-gray-50"><span class="text-base text-gray-800">星期二</span><div class="relative w-10 h-6"><input id="repeat-day-2" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <label class="flex justify-between items-center py-3 border-b border-gray-50"><span class="text-base text-gray-800">星期三</span><div class="relative w-10 h-6"><input id="repeat-day-3" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <label class="flex justify-between items-center py-3 border-b border-gray-50"><span class="text-base text-gray-800">星期四</span><div class="relative w-10 h-6"><input id="repeat-day-4" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <label class="flex justify-between items-center py-3 border-b border-gray-50"><span class="text-base text-gray-800">星期五</span><div class="relative w-10 h-6"><input id="repeat-day-5" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <label class="flex justify-between items-center py-3"><span class="text-base text-gray-800">星期六</span><div class="relative w-10 h-6"><input id="repeat-day-6" type="checkbox" onchange="updateRepeatSummary()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                </div>
+            </div>
+
+            <!-- 動態區塊：每月 -->
+            <div id="repeat-monthly-area" class="mt-2 bg-white hidden">
+                <p class="text-xs text-gray-400 px-5 pt-4 pb-2">每月的幾號重複：</p>
+                <div class="px-5 pb-4">
+                    <div id="repeat-monthly-grid" class="grid grid-cols-7 gap-1 text-center"></div>
+                </div>
+            </div>
+
+            <!-- 結束重複 -->
+            <div id="repeat-end-section" class="mt-2 bg-white">
+                <p class="text-xs text-gray-400 px-5 pt-4 pb-2">結束重複：</p>
+                <div class="px-5 pb-4 space-y-4">
+                    <label class="flex justify-between items-center"><span class="text-base text-gray-800">設定結束日期</span><div class="relative w-10 h-6"><input id="repeat-end-toggle" type="checkbox" onchange="toggleRepeatEndOptions()" class="toggle-checkbox absolute w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"><label class="toggle-label block h-6 rounded-full bg-gray-200 cursor-pointer transition-colors duration-300"></label></div></label>
+                    <div id="repeat-end-options" class="hidden space-y-4">
+                        <label class="flex items-center gap-4"><input type="radio" name="endType" class="w-5 h-5 accent-gray-900"><span class="text-base text-gray-700 flex-1">次數</span><input id="repeat-end-count" type="number" min="1" value="1" class="w-16 text-right text-base text-gray-800 bg-gray-100 rounded-lg px-2 py-1 outline-none"></label>
+                        <label class="flex items-center gap-4">
+                            <input type="radio" name="endType" class="w-5 h-5 accent-gray-900" checked>
+                            <span class="text-base font-bold text-gray-900 flex-1">直到</span>
+                            <button type="button" onclick="document.getElementById('repeat-end-date-input').showPicker()" id="repeat-end-date-display" class="text-base font-bold bg-gray-100 px-3 py-2 rounded-lg text-gray-800">2026/12/31</button>
+                            <input type="date" id="repeat-end-date-input" onchange="document.getElementById('repeat-end-date-display').textContent = this.value.replace(/-/g, '/')" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none">
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: 新聞素材挑選 -->
+    <div id="modal-news-picker" class="modal absolute inset-0 bg-white z-[60] hidden modal-slide-left flex-col">
+        <header class="p-4 border-b border-gray-100 flex items-center gap-4 bg-white sticky top-0">
+            <i class="fa-solid fa-arrow-left text-xl text-gray-600 cursor-pointer p-1" onclick="closeModal('modal-news-picker')"></i>
+            <h3 class="font-bold text-lg flex-1">挑選新聞素材</h3>
+        </header>
+        
+        <div class="flex overflow-x-auto no-scrollbar gap-2 px-4 py-3 bg-white border-b border-gray-100 shrink-0">
+            <button class="news-tab px-4 py-1.5 bg-black text-white rounded-full text-xs font-bold transition-colors" onclick="filterNews('all', this)">全部</button>
+            <button class="news-tab px-4 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="filterNews('tech', this)">科技</button>
+            <button class="news-tab px-4 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="filterNews('finance', this)">財經</button>
+            <button class="news-tab px-4 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="filterNews('politics', this)">政治</button>
+            <button class="news-tab px-4 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold transition-colors" onclick="filterNews('entertainment', this)">娛樂</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto bg-gray-50 p-4 space-y-3 pb-24" id="news-list-container">
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="tech">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="OpenAI 發表 o1 模型" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">OpenAI 發表 o1 模型，具備強大推理能力</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">此次發布的模型著重於邏輯推理與數學解題，在基準測試中表現優異，引發業界廣泛討論。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="tech">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="台灣半導體展落幕" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">台灣半導體展落幕，先進封裝技術成焦點</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">展會期間，多家設備廠展示了最新製程解決方案，預計明年將有爆發性成長。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="finance">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="全球央行啟動降息循環" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">全球央行啟動降息循環，資金板塊挪移</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">隨著通膨數據降溫，聯準會宣布降息兩碼，帶動全球股債市劇烈波動。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="finance">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="輝達財報亮眼但未達最高預期" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">輝達財報亮眼但未達「最高預期」</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">AI 晶片龍頭營收再次翻倍，但因市場預期過高，盤後股價出現小幅震盪。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="politics">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="美國總統大選首場辯論" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">美國總統大選首場辯論，經濟政策交鋒</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">兩黨候選人針對通膨、關稅與就業問題展開激烈辯論，民調顯示選情膠著。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="politics">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="立法院新會期開議" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">立法院新會期開議，總預算案成焦點</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">朝野政黨針對明年度中央政府總預算案進行初步攻防，多項民生法案待審。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="entertainment">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="艾美獎得獎名單揭曉" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">艾美獎得獎名單揭曉，《幕府將軍》成大贏家</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">史詩影集橫掃多項大獎，創下單一影集單屆獲獎數最高紀錄。</p></div>
+            </label>
+            <label class="news-item flex items-start gap-3 bg-white p-4 rounded-xl border border-gray-200 cursor-pointer shadow-sm" data-category="entertainment">
+                <input type="checkbox" class="news-checkbox mt-1 w-5 h-5 accent-gray-900" value="周杰倫宣布大巨蛋開唱" onchange="updateNewsCount()">
+                <div class="flex-1"><h4 class="font-bold text-sm text-gray-800">周杰倫宣布年底大巨蛋開唱</h4><p class="text-xs text-gray-500 mt-1 line-clamp-2">天王宣布將成為首位在台北大巨蛋舉辦專場演唱會的歌手，預計掀起搶票熱潮。</p></div>
+            </label>
+        </div>
+
+        <div class="absolute bottom-0 w-full p-4 bg-white border-t border-gray-100 shadow-[0_-5px_15px_rgba(0,0,0,0.05)] z-10">
+            <button id="btn-confirm-news" class="w-full bg-black text-white font-bold py-3.5 rounded-xl transition-transform active:scale-95 shadow-md flex justify-center items-center gap-2" onclick="confirmNewsSelection()">
+                確認選取（0）篇
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal: 資料夾內頁 (Folder View) -->
+    <div id="modal-folder-view" class="modal absolute inset-0 bg-gray-50 z-[40] hidden modal-slide-left flex-col">
+        <header class="p-4 bg-white border-b border-gray-100 flex items-center gap-4 shrink-0 shadow-sm z-10 sticky top-0">
+            <i class="fa-solid fa-arrow-left text-xl text-gray-600 cursor-pointer p-1" onclick="currentOpenFolder = null; closeModal('modal-folder-view')"></i>
+            <div>
+                <h3 class="font-bold text-lg text-gray-900" id="folder-view-title">資料夾名稱</h3>
+                <p class="text-xs text-gray-500" id="folder-view-count">0 個項目</p>
+            </div>
+        </header>
+        <div id="folder-view-list" class="flex-1 overflow-y-auto p-4 space-y-3 pb-20"></div>
+    </div>
+
+    <!-- Modal: 播放器 (Player) -->
+    <div id="modal-player" class="absolute inset-0 bg-white z-[70] hidden modal-enter flex-col overflow-hidden">
+        <div class="flex justify-between p-4 items-center shrink-0 relative">
+            <i class="fa-solid fa-chevron-down text-xl text-gray-500 cursor-pointer p-2 hover:text-gray-800" onclick="closeModal('modal-player')"></i>
+            <span class="font-bold text-xs text-gray-400 uppercase tracking-widest">現在播放</span>
+            <i class="fa-solid fa-ellipsis text-xl text-gray-500 p-2 cursor-pointer hover:text-gray-800" onclick="togglePlayerMenu(event)"></i>
+            <div id="player-menu" class="hidden absolute right-3 top-12 w-44 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-10">
+                <button onclick="sharePodcast()" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"><i class="fa-solid fa-share-nodes w-4 text-gray-400"></i>分享單集</button>
+                <button onclick="playerMenuAction('開始下載')" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"><i class="fa-solid fa-download w-4 text-gray-400"></i>下載音檔</button>
+                <button onclick="cyclePlaybackSpeed(event)" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"><i class="fa-solid fa-gauge-high w-4 text-gray-400"></i>播放速度：<span id="playback-speed-val">1.0x</span></button>
+                <button onclick="playerMenuAction('感謝回報，我們會盡快處理')" class="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-gray-50 border-t border-gray-50 mt-1 pt-2.5"><i class="fa-solid fa-flag w-4"></i>檢舉問題</button>
+            </div>
+        </div>
+        
+        <div class="px-8 py-4 w-full flex justify-center shrink-0">
+            <div class="w-[240px] aspect-square bg-gradient-to-br from-gray-700 to-gray-900 rounded-2xl shadow-2xl flex items-center justify-center text-white text-6xl">
+                <i class="fa-solid fa-podcast opacity-80"></i>
+            </div>
+        </div>
+
+        <div class="px-8 pt-2 pb-2 text-center shrink-0 relative">
+            <button id="player-fav-btn" class="fav-btn absolute right-6 top-2 w-9 h-9 flex items-center justify-center text-gray-300" data-title="輝達財報開獎分析" onclick="toggleFavorite(this)" aria-label="收藏"><i class="fa-solid fa-heart text-lg"></i></button>
+            <h2 id="player-title" class="text-xl font-bold text-gray-900 mb-1">輝達財報開獎分析</h2>
+            <p id="player-subtitle" class="text-sm text-gray-900 font-medium">單集 · 10 mins</p>        </div>
+
+        <div class="px-8 py-2 shrink-0">
+            <input id="player-scrub" type="range" min="0" max="100" value="30" oninput="syncPlayerProgress(this.value)">
+            <div class="flex justify-between text-[10px] text-gray-400 font-medium mt-1"><span>03:15</span><span>-06:45</span></div>
+        </div>
+
+        <div class="px-8 py-2 flex justify-center items-center gap-10 shrink-0">
+            <button class="text-gray-800 text-2xl active:scale-90 transition-transform"><i class="fa-solid fa-rotate-left"></i></button>
+            <button class="w-16 h-16 bg-black text-white rounded-full flex items-center justify-center text-2xl shadow-lg active:scale-90 transition-transform"><i class="fa-solid fa-pause"></i></button>
+            <button class="text-gray-800 text-2xl active:scale-90 transition-transform"><i class="fa-solid fa-rotate-right"></i></button>
+        </div>
+
+        <!-- 逐字稿與來源 Tab -->
+        <div class="flex-1 flex flex-col bg-gray-50 mt-2 rounded-t-3xl shadow-[0_-5px_15px_rgba(0,0,0,0.05)] overflow-hidden">
+            <div class="flex border-b border-gray-200 px-6 pt-3 shrink-0">
+                <button id="btn-tab-transcript" class="pb-2 flex-1 font-bold text-sm text-gray-900 border-b-2 border-black" onclick="switchPlayerTab('transcript')">AI 逐字稿</button>
+                <button id="btn-tab-sources" class="pb-2 flex-1 font-bold text-sm text-gray-400" onclick="switchPlayerTab('sources')">參考來源</button>
+            </div>
+            
+            <div id="player-tab-transcript" class="flex-1 overflow-y-auto no-scrollbar p-6">
+                <p class="text-sm text-gray-700 leading-relaxed mb-4"><strong class="text-gray-900">AI 主播：</strong>歡迎來到今天的科技速報。今天我們要為您解析輝達最新公布的財報資料，並探討這對台灣供應鏈的潛在影響...</p>
+            </div>
+
+            <div id="player-tab-sources" class="flex-1 hidden overflow-y-auto no-scrollbar p-6 space-y-3">
+                <!-- 動態注入的來源 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- 共用基礎邏輯 ---
+    function showToast(msg) {
+        const toast = document.getElementById('toast');
+        document.getElementById('toast-msg').innerText = msg;
+        toast.classList.remove('opacity-0');
+        setTimeout(() => toast.classList.add('opacity-0'), 3000);
+    }
+
+    function showView(viewId) {
+        document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+        document.getElementById(viewId).classList.add('active');
+    }
+
+    // --- 登入與註冊 ---
+    function toggleAuth(type) {
+        const l = document.getElementById('auth-login-form'), r = document.getElementById('auth-register-form');
+        if(type==='register') { l.classList.add('hidden'); r.classList.remove('hidden'); r.classList.add('flex'); }
+        else { r.classList.add('hidden'); r.classList.remove('flex'); l.classList.remove('hidden'); }
+    }
+    function login() { showView('view-main'); switchTab('home'); }
+    function register() { showView('view-onboarding'); }
+    
+    let onboardSelections = 0;
+    function toggleOnboardInterest(btn) {
+        const isSelected = btn.classList.toggle('bg-black');
+        btn.classList.toggle('text-white', isSelected); btn.classList.toggle('border-black', isSelected);
+        onboardSelections += isSelected ? 1 : -1;
+        const fb = document.getElementById('btn-finish-onboard');
+        if(onboardSelections >= 3) { fb.disabled = false; fb.innerText = "完成設定"; fb.classList.replace('bg-gray-300', 'bg-black'); }
+        else { fb.disabled = true; fb.innerText = "至少選擇 3 個"; fb.classList.replace('bg-black', 'bg-gray-300'); }
+    }
+    function finishOnboarding() { showView('view-main'); switchTab('home'); }
+
+    // --- 底部 Tab 切換 ---
+    function switchTab(tabName) {
+        document.querySelectorAll('.tab-content').forEach(el => { el.classList.add('hidden'); el.classList.remove('flex'); });
+        const target = document.getElementById(`tab-${tabName}`);
+        target.classList.remove('hidden'); target.classList.add('flex');
+
+        document.querySelectorAll('.nav-btn').forEach(btn => { btn.classList.remove('text-gray-900'); btn.classList.add('text-gray-400'); });
+        const navBtn = document.querySelector(`.nav-btn[data-tab="${tabName}"]`);
+        if (navBtn) { navBtn.classList.remove('text-gray-400'); navBtn.classList.add('text-gray-900'); }
+    }
+
+    // --- Modal 開關 ---
+    function openModal(id) { 
+        const m = document.getElementById(id); m.classList.remove('hidden'); m.classList.add('flex');
+        setTimeout(() => m.classList.add('open'), 10);
+    }
+    function closeModal(id) {
+        const m = document.getElementById(id); m.classList.remove('open');
+        setTimeout(() => { m.classList.add('hidden'); m.classList.remove('flex'); }, 300);
+    }
+
+    // --- 我的播客資料夾 ---
+    const FOLDER_ITEMS = {
+        '單集': [
+            { title: '輝達財報開獎分析', meta: '單集 · 今天' },
+            { title: 'OpenAI 開發者大會回顧', meta: '單集 · 昨天' },
+            { title: '台積電法說會重點整理', meta: '單集 · 前天' },
+            { title: '每週科技趨勢統整', meta: '單集 · 上週二' },
+        ],
+        '推薦': [
+            { title: '蘋果秋季發表會', meta: 'AI 推薦 · 依據：科技' },
+            { title: '全球降息啟動', meta: 'AI 推薦 · 依據：財經' },
+        ],
+    };
+    const FOLDER_COLOR_ELS = { '單集': 'folder-count-single', '推薦': 'folder-count-reco' };
+
+    const SCHEDULE_RULES = {
+        '科技早報': {
+            time: '每天 08:00', icon: 'fa-mug-hot',
+            episodes: [
+                { title: '科技早報', meta: '9/24（四）08:00 · 8 mins', sources: ['台積電法說會：2 奈米量產時程曝光', 'AI 新創募資動向：東南亞資金加碼'] },
+                { title: '科技早報', meta: '9/23（三）08:00 · 7 mins', sources: ['AI 新創募資動向：東南亞資金加碼'] },
+                { title: '科技早報', meta: '9/22（二）08:00 · 8 mins', sources: ['半導體展落幕，先進封裝技術成焦點'] },
+            ],
+        },
+        '通勤總經快訊': {
+            time: '每天 07:30', icon: 'fa-train-subway',
+            episodes: [
+                { title: '通勤總經快訊', meta: '9/24（四）07:30 · 5 mins', sources: ['道瓊指數創歷史新高，科技股領漲', 'Fed 官員談話透露降息訊號', '美元指數走弱，新興市場資金回流'] },
+                { title: '通勤總經快訊', meta: '9/23（三）07:30 · 5 mins', sources: ['聯準會利率決策前夕，市場觀望氣氛濃厚', '亞股早盤表現分歧，台股小幅開高'] },
+            ],
+        },
+        '晚間國際新聞回顧': {
+            time: '每天 18:00', icon: 'fa-moon',
+            episodes: [
+                { title: '晚間國際新聞回顧', meta: '9/23（三）18:00 · 6 mins', sources: ['地緣政治風險升溫，能源市場波動加劇', '美國經濟數據優於預期，那斯達克指數走高'] },
+            ],
+        },
+    };
+
+    var FAVORITES = new Set(['輝達財報開獎分析']);
+    var currentOpenFolder = null;
+
+    // 所有「本集使用的新聞」清單共用的超連結產生器
+    function newsLinkHtml(headline) {
+        var url = 'https://www.google.com/search?q=' + encodeURIComponent(headline) + '&tbm=nws';
+        return '<p><a href="' + url + '" target="_blank" rel="noopener" class="hover:text-gray-900 hover:underline">・' + headline + ' <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-gray-300"></i></a></p>';
+    }
+
+    function heartBtnHtml(title) {
+        var esc = title.replace(/"/g, '&quot;');
+        var on = FAVORITES.has(title);
+        // 使用粉紅色 text-pink-500
+        return '<button class="fav-btn w-8 h-8 flex items-center justify-center flex-shrink-0 ' + (on ? 'text-pink-500' : 'text-gray-300') + '" data-title="' + esc + '" onclick="event.stopPropagation(); toggleFavorite(this)"><i class="fa-solid fa-heart"></i></button>';
+    }
+
+    function toggleFavorite(btn) {
+        var title = btn.dataset.title;
+        if (FAVORITES.has(title)) FAVORITES.delete(title); else FAVORITES.add(title);
+        var on = FAVORITES.has(title);
+        document.querySelectorAll('.fav-btn[data-title="' + CSS.escape(title) + '"]').forEach(function (b) {
+            b.classList.toggle('text-pink-500', on);
+            b.classList.toggle('text-gray-300', !on);
+        });
+        initFolderCounts();
+        var folderViewEl = document.getElementById('modal-folder-view');
+        var folderViewOpen = folderViewEl && !folderViewEl.classList.contains('hidden');
+        if (currentOpenFolder === '收藏' && folderViewOpen) openFolder('收藏');
+    }
+
+    function renderFolderEpisodeRow(it, idx) {
+        var safeTitle = it.title.replace(/'/g, "\\'");
+        var safeMeta = it.meta.replace(/'/g, "\\'");
+        var hasSources = Array.isArray(it.sources) && it.sources.length > 0;
+        var srcId = 'folder-src-' + idx;
+        var row = '<div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3' + (hasSources ? ' cursor-pointer' : '') + '"'
+            + (hasSources ? ' onclick="folderToggleSources(\'' + srcId + '\')"' : '') + '>'
+            + '<button onclick="event.stopPropagation(); playEpisode(\'' + safeTitle + '\', \'' + safeMeta + '\', \'folder\')" class="w-10 h-10 bg-black text-white rounded-full flex items-center justify-center flex-shrink-0 shadow"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>'
+            + '<div class="flex-1 min-w-0"><h4 class="font-bold text-sm truncate">' + it.title + '</h4><p class="text-[10px] text-gray-400">' + it.meta + '</p></div>'
+            + heartBtnHtml(it.title)
+            + '</div>';
+        if (!hasSources) return row;
+        var sourcesPanel = '<div id="' + srcId + '" class="hidden pl-4 pr-1 pt-1 pb-1">'
+            + '<div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">'
+            + '<p class="font-bold text-gray-600 mb-1">本集使用的新聞</p>'
+            + it.sources.map(newsLinkHtml).join('')
+            + '</div></div>';
+        return '<div class="mb-2">' + row + sourcesPanel + '</div>';
+    }
+
+    function folderToggleSources(id) {
+        var panel = document.getElementById(id);
+        var wasOpen = !panel.classList.contains('hidden');
+        document.querySelectorAll('[id^="folder-src-"]').forEach(function (p) { p.classList.add('hidden'); });
+        if (!wasOpen) panel.classList.remove('hidden');
+    }
+
+    function initFolderCounts() {
+        Object.keys(FOLDER_ITEMS).forEach(name => {
+            const el = document.getElementById(FOLDER_COLOR_ELS[name]);
+            if (el) el.textContent = FOLDER_ITEMS[name].length + ' 個項目';
+        });
+        document.getElementById('folder-count-schedule').textContent = Object.keys(SCHEDULE_RULES).length + ' 個排程';
+        document.getElementById('folder-count-fav').textContent = FAVORITES.size + ' 個項目';
+    }
+
+    function openFolder(title) {
+        currentOpenFolder = title;
+        if (title === '排程') { openScheduleFolders(); return; }
+
+        var items;
+        if (title === '收藏') {
+            items = Array.from(FAVORITES).map(function (t) { return { title: t, meta: '已收藏' }; });
+        } else {
+            items = FOLDER_ITEMS[title] || [];
+        }
+        document.getElementById('folder-view-title').innerText = title;
+        document.getElementById('folder-view-count').innerText = items.length + ' 個項目';
+        document.getElementById('folder-view-list').innerHTML = items.map(renderFolderEpisodeRow).join('')
+            || '<p class="text-center text-sm text-gray-400 pt-10">這個資料夾還沒有內容</p>';
+        openModal('modal-folder-view');
+    }
+
+    function openScheduleFolders() {
+        document.getElementById('folder-view-title').innerText = '排程';
+        document.getElementById('folder-view-count').innerText = Object.keys(SCHEDULE_RULES).length + ' 個排程';
+        document.getElementById('folder-view-list').innerHTML = Object.keys(SCHEDULE_RULES).map(function (name) {
+            var rule = SCHEDULE_RULES[name];
+            return '<button class="w-full bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 active:scale-[0.98] transition-transform" onclick="openScheduleEpisodes(\'' + name + '\')">'
+                + '<div class="w-12 h-12 bg-[#1D4ED8]/10 rounded-xl flex items-center justify-center text-xl text-[#1D4ED8] flex-shrink-0"><i class="fa-solid ' + rule.icon + '"></i></div>'
+                + '<div class="flex-1 min-w-0 text-left"><h4 class="font-bold text-gray-800 text-sm">' + name + '</h4><p class="text-[11px] text-gray-400">' + rule.time + ' · ' + rule.episodes.length + ' 集</p></div>'
+                + '<i class="fa-solid fa-chevron-right text-gray-300 text-xs"></i>'
+                + '</button>';
+        }).join('');
+        openModal('modal-folder-view');
+    }
+
+    function openScheduleEpisodes(name) {
+        var rule = SCHEDULE_RULES[name];
+        document.getElementById('folder-view-title').innerText = name;
+        document.getElementById('folder-view-count').innerText = rule.time + ' · ' + rule.episodes.length + ' 集';
+        document.getElementById('folder-view-list').innerHTML = rule.episodes.map(renderFolderEpisodeRow).join('');
+        openModal('modal-folder-view');
+    }
+
+    // --- 行事曆與智慧表單邏輯 ---
+    function toggleCalView(v) {
+        var weekBtn = document.getElementById('cal-view-btn-week');
+        var monthBtn = document.getElementById('cal-view-btn-month');
+        if (v === 'week') {
+            document.getElementById('cal-week-view').classList.remove('hidden');
+            document.getElementById('cal-month-view').classList.add('hidden');
+            weekBtn.className = 'text-[10px] font-bold bg-white text-gray-900 shadow-sm px-3 py-1 rounded';
+            monthBtn.className = 'text-[10px] font-bold text-gray-500 px-3 py-1 rounded';
+        } else {
+            document.getElementById('cal-month-view').classList.remove('hidden');
+            document.getElementById('cal-week-view').classList.add('hidden');
+            monthBtn.className = 'text-[10px] font-bold bg-white text-gray-900 shadow-sm px-3 py-1 rounded';
+            weekBtn.className = 'text-[10px] font-bold text-gray-500 px-3 py-1 rounded';
+        }
+    }
+
+    var CAL_TODAY = { y: 2026, m: 8, d: 24 };
+
+    var CAL_DAY_ITEMS = {
+        20: [
+            { time: '08:00', type: 'schedule', title: '科技早報', status: 'done', meta: '7 mins', sources: ['週末科技新聞回顧', 'CES 展前搶先看'] },
+        ],
+        21: [
+            { time: '07:30', type: 'schedule', title: '通勤總經快訊', status: 'done', meta: '5 mins', sources: ['本週股匯市重點回顧', '週一開盤前必看三大指標'] },
+            { time: '08:00', type: 'schedule', title: '科技早報', status: 'done', meta: '8 mins', sources: ['週一科技產業動態彙整'] },
+            { time: '12:00', type: 'schedule', title: '週一午間快訊', status: 'done', meta: '5 mins', sources: ['本週股匯市重點回顧', '週一開盤前必看三大指標'] },
+        ],
+        22: [
+            { time: '08:00', type: 'schedule', title: '科技早報', status: 'done', meta: '8 mins', sources: ['半導體展落幕，先進封裝技術成焦點'] },
+            { time: null, type: 'single', title: '台積電法說會重點整理', status: 'done', meta: '9 mins', sources: ['台積電法說會：2 奈米量產時程曝光', '外資看法整理與評等調整'] },
+        ],
+        23: [
+            { time: '08:00', type: 'schedule', title: '科技早報', status: 'done', meta: '8 mins', sources: ['AI 新創募資動向：東南亞資金加碼'] },
+            { time: null, type: 'single', title: '每週科技趨勢統整', status: 'done', meta: '11 mins', sources: ['本週科技界五大關鍵事件'] },
+        ],
+        24: [
+            { time: '07:30', type: 'schedule', title: '通勤總經快訊', status: 'done', meta: '5 mins', sources: ['道瓊指數創歷史新高，科技股領漲', 'Fed 官員談話透露降息訊號', '美元指數走弱，新興市場資金回流'] },
+            { time: '08:00', type: 'schedule', title: '科技早報', status: 'done', meta: '8 mins', sources: ['台積電法說會：2 奈米量產時程曝光', 'AI 新創募資動向：東南亞資金加碼'] },
+            { time: '18:00', type: 'schedule', title: '晚間國際新聞回顧', status: 'generating', meta: '', sources: ['中東情勢牽動油價，布蘭特原油走高', '美國總統大選首場辯論，經濟政策交鋒'] },
+            { time: null, type: 'single', title: '輝達財報開獎分析', status: 'done', meta: '10 mins', sources: ['輝達 Q3 財報擊敗預期，資料中心營收創新高', 'AI 晶片龍頭營收翻倍，盤後股價小幅震盪'] },
+            { time: null, type: 'single', title: 'OpenAI o1 模型深度解析', status: 'generating', meta: '', sources: ['OpenAI 發表 o1 模型，具備強大推理能力'] },
+        ],
+    };
+
+    function calDayItems(y, m, d) {
+        if (y === 2026 && m === 8) return CAL_DAY_ITEMS[d] || [];
+        return [];
+    }
+    function calIsToday(y, m, d) { return y === CAL_TODAY.y && m === CAL_TODAY.m && d === CAL_TODAY.d; }
+    
+    var CAL_DOT_COLOR = { schedule: 'bg-[#1D4ED8]', single: 'bg-[#0EA5E9]', reco: 'bg-[#F59E0B]' };
+    function calDotsHtml(items) {
+        if (!items || !items.length) return '';
+        var s = '<div class="flex gap-0.5 justify-center mt-0.5">';
+        for (var i = 0; i < Math.min(items.length, 3); i++) {
+            s += '<span class="w-1 h-1 rounded-full ' + (CAL_DOT_COLOR[items[i].type] || 'bg-gray-400') + '"></span>';
+        }
+        return s + '</div>';
+    }
+
+    var calSelectedDay = 24, calSelectedY = 2026, calSelectedM = 8;
+
+    function openCreateForDay(day, y, m) {
+        var mode = calIsToday(y, m, day) ? 'today' : 'future';
+        openCreateModal(mode, day, y, m);
+    }
+
+    function selectCalDay(day, y, m) {
+        if (y === undefined) y = calRefYear;
+        if (m === undefined) m = calRefMonth;
+        calSelectedDay = day; calSelectedY = y; calSelectedM = m;
+        document.querySelectorAll('.cal-day-cell').forEach(function (cell) {
+            var num = cell.querySelector('.cal-day-num');
+            var isSel = Number(cell.dataset.day) === day && Number(cell.dataset.y) === y && Number(cell.dataset.m) === m;
+            num.classList.toggle('bg-black', isSel);
+            num.classList.toggle('text-white', isSel);
+            num.classList.toggle('shadow-md', isSel);
+            num.classList.toggle('text-gray-700', !isSel);
+        });
+        renderCalDayDetail();
+    }
+
+    function renderCalDayDetail() {
+        document.getElementById('cal-day-label').textContent = calDateLabel(calSelectedY, calSelectedM, calSelectedDay);
+        var items = calDayItems(calSelectedY, calSelectedM, calSelectedDay);
+        var mode = calIsToday(calSelectedY, calSelectedM, calSelectedDay) ? 'today' : 'future';
+        document.getElementById('cal-add-btn').setAttribute('onclick', "openCreateModal('" + mode + "', " + calSelectedDay + ", " + calSelectedY + ", " + calSelectedM + ")");
+
+        var list = document.getElementById('cal-day-list');
+        if (items.length === 0) {
+            list.innerHTML = '';
+            return;
+        }
+        
+        list.innerHTML = items.map(function (it, idx) {
+            var isSchedule = it.type === 'schedule';
+            var accentClasses = isSchedule
+                ? { tint: 'bg-[#1D4ED8]/10', text: 'text-[#1D4ED8]', solid: 'bg-[#1D4ED8]' }
+                : { tint: 'bg-[#0EA5E9]/10', text: 'text-[#0EA5E9]', solid: 'bg-[#0EA5E9]' };
+            var typeLabel = isSchedule ? '排程' : '單集';
+            var typeIcon = isSchedule ? 'fa-calendar-check' : 'fa-microphone-lines';
+            var done = it.status === 'done';
+            var srcId = 'cal-src-' + idx;
+            var leftCol = it.time
+                ? '<div class="w-11 flex-shrink-0 text-right pt-3"><span class="text-sm font-bold ' + (done ? 'text-gray-700' : 'text-gray-400') + '">' + it.time + '</span></div>'
+                : '<div class="w-11 flex-shrink-0 text-right pt-3"><span class="text-xs font-bold ' + (done ? 'text-gray-700' : 'text-gray-400') + '">' + typeLabel + '</span></div>';
+            var cardInner = done
+                ? '<span class="text-[10px] ' + accentClasses.tint + ' ' + accentClasses.text + ' px-1.5 py-0.5 rounded font-bold"><i class="fa-solid ' + typeIcon + '"></i> ' + typeLabel + '</span>'
+                    + '<h4 class="font-bold text-sm text-gray-900 truncate mt-1">' + it.title + '</h4>'
+                    + '<p class="text-[11px] text-gray-400">' + it.meta + '</p>'
+                : '<span class="text-[10px] text-gray-400 font-bold"><i class="fa-solid fa-circle-notch fa-spin"></i> 生成中</span>'
+                    + '<h4 class="font-bold text-sm text-gray-500 truncate mt-0.5">' + it.title + '</h4>';
+            var playBtn = done
+                ? '<button onclick="event.stopPropagation(); playEpisode(\'' + it.title + '\', \'' + typeLabel + (it.time ? ' · 設定 ' + it.time : '') + (it.meta ? ' · ' + it.meta : '') + '\', \'' + it.type + '\')" class="w-9 h-9 ' + accentClasses.solid + ' rounded-full flex items-center justify-center text-white flex-shrink-0 shadow ml-2"><i class="fa-solid fa-play ml-0.5 text-xs"></i></button>'
+                : '';
+            var card = '<div class="flex-1 min-w-0 ' + (done ? 'bg-white rounded-xl shadow-md p-3 flex items-center justify-between' : 'bg-gray-50 rounded-xl p-3 flex items-center justify-between') + '">'
+                + '<div class="min-w-0">' + cardInner + '</div>' + playBtn + '</div>';
+            var row = '<div class="flex items-stretch gap-3 cursor-pointer' + (done ? '' : ' opacity-70') + '" onclick="calToggleSources(\'' + srcId + '\')">'
+                + leftCol
+                + '<div class="w-1 rounded-full ' + (done ? accentClasses.solid : 'bg-gray-300') + ' flex-shrink-0"></div>'
+                + card + '</div>';
+            var sourcesPanel = '<div id="' + srcId + '" class="hidden pl-[60px] pr-1 pb-1 pt-1">'
+                + '<div class="bg-gray-50 rounded-lg p-2.5 text-[11px] text-gray-500 space-y-1">'
+                + '<p class="font-bold text-gray-600 mb-1">' + (done ? '本集使用的新聞' : '正在使用這些新聞生成') + '</p>'
+                + it.sources.map(newsLinkHtml).join('')
+                + '</div></div>';
+            return '<div class="mb-2">' + row + sourcesPanel + '</div>';
+        }).join('');
+    }
+
+    function calToggleSources(id) {
+        var panel = document.getElementById(id);
+        var wasOpen = !panel.classList.contains('hidden');
+        document.querySelectorAll('[id^="cal-src-"]').forEach(function (p) { p.classList.add('hidden'); });
+        if (!wasOpen) panel.classList.remove('hidden');
+    }
+
+    function calDateLabel(y, m, d) {
+        const weekdays = ['日','一','二','三','四','五','六'];
+        const weekday = new Date(y, m, d).getDay();
+        return (m + 1) + '月' + d + '日星期' + weekdays[weekday];
+    }
+
+    var calRefYear = 2026, calRefMonth = 8;
+
+    function renderCalMonthLabel() {
+        document.getElementById('cal-year-display').textContent = calRefYear;
+        document.getElementById('cal-year-select').value = calRefYear;
+        document.getElementById('cal-month-num-label').textContent = calRefMonth + 1;
+    }
+
+    function populateCalYearSelect() {
+        const sel = document.getElementById('cal-year-select');
+        let html = '';
+        for (let y = CAL_TODAY.y - 5; y <= CAL_TODAY.y + 5; y++) html += '<option value="' + y + '">' + y + '</option>';
+        sel.innerHTML = html;
+        sel.value = calRefYear;
+    }
+    
+    function jumpToCalYear(y) {
+        calRefYear = Number(y);
+        renderCalMonthLabel();
+        renderCalMonthGrid();
+        selectCalDay(1, calRefYear, calRefMonth);
+    }
+
+    function renderCalMonthGrid() {
+        var startWeekday = new Date(calRefYear, calRefMonth, 1).getDay();
+        var totalDays = new Date(calRefYear, calRefMonth + 1, 0).getDate();
+        var html = '';
+        for (var i = 0; i < startWeekday; i++) html += '<div></div>';
+        for (var d = 1; d <= totalDays; d++) {
+            var dayItems = calDayItems(calRefYear, calRefMonth, d);
+            var today = calIsToday(calRefYear, calRefMonth, d);
+            html += '<div class="cal-day-cell cursor-pointer flex flex-col items-center" data-day="' + d + '" data-y="' + calRefYear + '" data-m="' + calRefMonth + '"'
+                + (today ? ' data-today="true"' : '') + ' onclick="selectCalDay(' + d + ',' + calRefYear + ',' + calRefMonth + ')" ondblclick="openCreateForDay(' + d + ',' + calRefYear + ',' + calRefMonth + ')">'
+                + '<div class="cal-day-num w-7 h-7 rounded-full flex items-center justify-center text-sm text-gray-700' + (today ? ' font-bold' : '') + '">' + d + '</div>'
+                + '<div class="h-2 w-full mt-0.5">' + (today ? '<div class="flex justify-center items-start"><div class="w-1.5 h-1.5 rounded-full bg-red-500"></div></div>' : calDotsHtml(dayItems)) + '</div>'
+                + '</div>';
+        }
+        document.getElementById('cal-month-grid').innerHTML = html;
+    }
+
+    function shiftCalMonth(delta) {
+        calRefMonth += delta;
+        if (calRefMonth < 0) { calRefMonth = 11; calRefYear--; }
+        if (calRefMonth > 11) { calRefMonth = 0; calRefYear++; }
+        renderCalMonthLabel();
+        renderCalMonthGrid();
+        selectCalDay(1, calRefYear, calRefMonth);
+    }
+
+    function resetScheduleForm() {
+        document.querySelectorAll('.cat-chip').forEach(btn => {
+            btn.classList.remove('bg-black', 'text-white', 'border-black');
+            btn.classList.add('bg-white', 'text-gray-600', 'border-gray-300');
+        });
+        selectedCats = 0;
+        recoTopicBatchStart = 0;
+        updateRecoTopicAvailability();
+        const catBody = document.getElementById('cat-section-body');
+        const catChevron = document.getElementById('cat-section-chevron');
+        if (catBody) { catBody.classList.add('hidden'); catChevron.classList.remove('rotate-180'); }
+        const topicInput = document.getElementById('topic-input');
+        if (topicInput) topicInput.value = '';
+        topicPrevValue = null;
+        const undoBtn = document.getElementById('topic-undo-btn');
+        if (undoBtn) undoBtn.classList.add('hidden');
+        
+        document.getElementById('repeat-freq').value = 'weekly';
+        document.getElementById('repeat-weekly-area').classList.remove('hidden');
+        document.getElementById('repeat-monthly-area').classList.add('hidden');
+        document.getElementById('repeat-end-toggle').checked = false;
+        document.getElementById('repeat-end-options').classList.add('hidden');
+        document.getElementById('repeat-end-section').classList.remove('hidden');
+        document.getElementById('repeat-end-count').value = 1;
+        const yearEnd = CAL_TODAY.y + '-12-31';
+        document.getElementById('repeat-end-date-input').value = yearEnd;
+        document.getElementById('repeat-end-date-display').textContent = yearEnd.replace(/-/g, '/');
+    }
+
+    function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+    function onScheduleDateChange(dateStr) {
+        if (!dateStr) return;
+        const parts = dateStr.split('-');
+        let y = Number(parts[0]), m = Number(parts[1]) - 1, day = Number(parts[2]);
+        const rolled = rollPastDateForward(y, m, day);
+        if (rolled.getFullYear() !== y || rolled.getMonth() !== m || rolled.getDate() !== day) {
+            y = rolled.getFullYear(); m = rolled.getMonth(); day = rolled.getDate();
+            document.getElementById('schedule-date-input').value = y + '-' + pad2(m + 1) + '-' + pad2(day);
+            showToast('排程不能排在今天之前，已經跳到下一週的同一天');
+        }
+        const dateLabel = calDateLabel(y, m, day);
+        document.getElementById('schedule-date-label').textContent = dateLabel;
+        if (document.getElementById('repeat-freq').value === 'monthly') renderRepeatMonthlyGrid();
+        applyDefaultRepeatWeekday(y, m, day);
+    }
+
+    function applyDefaultRepeatWeekday(y, m, day) {
+        const weekday = new Date(y, m, day).getDay();
+        for (let i = 0; i <= 6; i++) {
+            const cb = document.getElementById('repeat-day-' + i);
+            if (cb) cb.checked = (i === weekday);
+        }
+        updateRepeatSummary();
+    }
+
+    function openCreateModal(mode, day, y, m) {
+        if (day === undefined) day = 24;
+        if (y === undefined) y = 2026;
+        if (m === undefined) m = 8;
+        if (mode === 'future') {
+            const rolled = rollPastDateForward(y, m, day);
+            y = rolled.getFullYear(); m = rolled.getMonth(); day = rolled.getDate();
+        }
+        const toggle = document.getElementById('immediate-toggle');
+        const dateLabel = calDateLabel(y, m, day);
+        document.getElementById('schedule-date-label').textContent = dateLabel;
+        document.getElementById('schedule-date-input').value = y + '-' + pad2(m + 1) + '-' + pad2(day);
+        resetScheduleForm();
+        applyDefaultRepeatWeekday(y, m, day);
+        toggle.checked = (mode === 'today');
+        document.getElementById('create-mode-select').value = mode === 'today' ? 'today' : 'future';
+        syncModeDisplay();
+        updateModeIcon(mode === 'today');
+        handleImmediateToggle();
+        openModal('modal-unified-create');
+    }
+
+    function updateModeIcon(isToday) {
+        document.getElementById('create-mode-icon').className = isToday
+            ? 'fa-regular fa-clock text-gray-500 text-[10px]'
+            : 'fa-solid fa-calendar-check text-gray-500 text-[10px]';
+    }
+
+    function syncModeDisplay() {
+        const select = document.getElementById('create-mode-select');
+        document.getElementById('create-mode-display').textContent = select.options[select.selectedIndex].text;
+    }
+
+    function goCreateSchedule() {
+        openCreateModal('future', 24, 2026, 8);
+    }
+    function goCreateSingle() {
+        openCreateModal('today', 24, 2026, 8);
+    }
+
+    function handleModeSwitch(value) {
+        document.getElementById('immediate-toggle').checked = (value === 'today');
+        syncModeDisplay();
+        updateModeIcon(value === 'today');
+        handleImmediateToggle();
+    }
+
+    function handleImmediateToggle() {
+        const isImmediate = document.getElementById('immediate-toggle').checked;
+        const chatArea = document.getElementById('chat-mode-container');
+        const paramsArea = document.getElementById('single-params-container');
+        const scheduleArea = document.getElementById('schedule-mode-container');
+        const title = document.getElementById('create-modal-title');
+        const saveBtn = document.getElementById('create-save-btn');
+        const modeSelect = document.getElementById('create-mode-select');
+        if (modeSelect) { modeSelect.value = isImmediate ? 'today' : 'future'; syncModeDisplay(); }
+
+        paramsArea.classList.add('hidden'); paramsArea.classList.remove('flex');
+
+        if(isImmediate) {
+            scheduleArea.classList.add('hidden'); scheduleArea.classList.remove('flex');
+            chatArea.classList.remove('hidden'); chatArea.classList.add('flex');
+            title.innerText = "單集生成";
+            saveBtn.classList.add('hidden');
+        } else {
+            chatArea.classList.add('hidden'); chatArea.classList.remove('flex');
+            scheduleArea.classList.remove('hidden'); scheduleArea.classList.add('flex');
+            title.innerText = "新增排程";
+            saveBtn.classList.remove('hidden');
+        }
+    }
+
+    function showSingleParams() {
+        if (!chatArticleState || chatArticleState.checked.size < CHAT_ARTICLE_MIN) return;
+        const picker = document.getElementById('chat-article-picker');
+        if (picker) {
+            picker.querySelectorAll('input[type=checkbox]').forEach(function (cb) { cb.disabled = true; });
+            const continueBtn = document.getElementById('chat-article-continue-btn');
+            if (continueBtn) continueBtn.remove();
+            const shuffleBtn = picker.querySelector('.chat-article-shuffle-btn');
+            if (shuffleBtn) shuffleBtn.remove();
+        }
+        const chatContainer = document.getElementById('chat-messages');
+        const aiBubble = `
+            <div class="flex items-start gap-3">
+                <div class="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center shadow flex-shrink-0 text-sm"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+                <div class="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm border border-gray-100 text-gray-800 text-sm font-medium flex-1">
+                    最後選一下想要的風格跟詳細程度：
+                    ${renderStyleDetailPickerHtml()}
+                </div>
+            </div>
+        `;
+        chatContainer.insertAdjacentHTML('beforeend', aiBubble);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        document.getElementById('create-modal-title').innerText = "單集設定";
+    }
+
+    function updateFollowedCategoriesCount() {
+        const count = document.querySelectorAll('.followed-cat-toggle:checked').length;
+        document.getElementById('followed-categories-count').textContent = count + ' 個分類';
+    }
+
+    function openEditProfileModal() {
+        document.getElementById('edit-display-name-input').value = document.getElementById('profile-display-name').textContent;
+        openModal('modal-edit-profile');
+    }
+    
+    function saveDisplayName() {
+        const name = document.getElementById('edit-display-name-input').value.trim();
+        if (!name) { showToast('顯示名稱不能是空白'); return; }
+        document.getElementById('profile-display-name').textContent = name;
+        const initial = name.charAt(0).toUpperCase();
+        document.querySelectorAll('#profile-avatar-initial, [aria-label="個人頁面"]').forEach(function (el) { el.textContent = initial; });
+        closeModal('modal-edit-profile');
+        showToast('顯示名稱已更新');
+    }
+
+    function saveNewPassword() {
+        const current = document.getElementById('current-password-input').value;
+        const next = document.getElementById('new-password-input').value;
+        const confirm = document.getElementById('confirm-password-input').value;
+        const errorEl = document.getElementById('change-password-error');
+        let error = '';
+        if (!current || !next || !confirm) error = '請完整填寫所有欄位';
+        else if (next.length < 8) error = '新密碼至少需要 8 個字元';
+        else if (next !== confirm) error = '兩次輸入的新密碼不一致';
+        if (error) { errorEl.textContent = error; errorEl.classList.remove('hidden'); return; }
+        errorEl.classList.add('hidden');
+        document.getElementById('current-password-input').value = '';
+        document.getElementById('new-password-input').value = '';
+        document.getElementById('confirm-password-input').value = '';
+        closeModal('modal-change-password');
+        showToast('密碼已更新');
+    }
+
+    function renderStyleDetailPickerHtml() {
+        const styles = ['對話式雙人', '單人講解', '深度訪談'];
+        const details = ['精簡', '摘要', '標準', '深入分析'];
+        const styleChips = styles.map(function (s, i) {
+            return '<button type="button" class="style-chip-inline px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ' + (i === 0 ? 'bg-black text-white border-black' : 'bg-white border-gray-300 text-gray-600') + '" onclick="selectChip(this,\'style-chip-inline\')">' + s + '</button>';
+        }).join('');
+        const detailChips = details.map(function (s) {
+            return '<button type="button" class="detail-chip-inline px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ' + (s === '標準' ? 'bg-black text-white border-black' : 'bg-white border-gray-300 text-gray-600') + '" onclick="selectChip(this,\'detail-chip-inline\')">' + s + '</button>';
+        }).join('');
+        return '<div class="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-3">'
+            + '<div><p class="text-[11px] font-bold text-gray-500 mb-1.5">播客風格</p><div class="flex flex-wrap gap-1.5">' + styleChips + '</div></div>'
+            + '<div><p class="text-[11px] font-bold text-gray-500 mb-1.5">詳細程度</p><div class="flex flex-wrap gap-1.5">' + detailChips + '</div></div>'
+            + '<button type="button" class="w-full bg-black text-white font-bold py-2.5 rounded-xl flex justify-center items-center gap-2 shadow-md active:scale-95 transition-transform" onclick="startGenerationFlow()"><i class="fa-solid fa-play"></i> 立即開始生成</button>'
+            + '</div>';
+    }
+    
+    function selectChip(btn, groupClass) {
+        document.querySelectorAll('.' + groupClass).forEach(b => {
+            b.classList.remove('bg-black', 'text-white', 'border-black');
+            b.classList.add('bg-white', 'text-gray-600', 'border-gray-300');
+        });
+        btn.classList.remove('bg-white', 'text-gray-600', 'border-gray-300');
+        btn.classList.add('bg-black', 'text-white', 'border-black');
+    }
+
+    let selectedCats = 0;
+    function toggleCategory(btn, cat) {
+        if(btn.classList.contains('bg-black')) {
+            btn.classList.remove('bg-black', 'text-white', 'border-black');
+            btn.classList.add('bg-white', 'text-gray-600', 'border-gray-300');
+            selectedCats--;
+        } else {
+            if(selectedCats >= 3) { showToast('最多只能選擇 3 個分類'); return; }
+            btn.classList.remove('bg-white', 'text-gray-600', 'border-gray-300');
+            btn.classList.add('bg-black', 'text-white', 'border-black');
+            selectedCats++;
+        }
+        updateRecoTopicAvailability();
+    }
+    function fillTopic(text) {
+        document.getElementById('topic-input').value = text;
+        topicPrevValue = null;
+        document.getElementById('topic-undo-btn').classList.add('hidden');
+    }
+
+    const RECO_TOPIC_POOL = [
+        '台灣政治版圖變遷', '影視娛樂產業趨勢', '半導體供應鏈最新動態',
+        '全球央行利率政策走向', '國際地緣政治局勢', 'AI 產業重大突破',
+        '職場趨勢與人才議題', '運動賽事焦點回顧', '氣候變遷與能源政策',
+    ];
+    let recoTopicBatchStart = 0;
+
+    function updateRecoTopicAvailability() {
+        const box = document.getElementById('reco-topic-box');
+        const hint = document.getElementById('reco-topic-hint');
+        if (!box) return;
+        const enabled = selectedCats > 0;
+        box.classList.toggle('opacity-40', !enabled);
+        box.classList.toggle('pointer-events-none', !enabled);
+        if (hint) {
+            hint.textContent = enabled
+                ? '已選 ' + selectedCats + ' 個分類・以下主題可以直接套用'
+                : '先選上面的分類，才能挑推薦主題';
+        }
+        if (enabled) renderRecoTopics();
+    }
+
+    function renderRecoTopics() {
+        const list = document.getElementById('reco-topic-list');
+        if (!list) return;
+        const batch = [];
+        for (let i = 0; i < 3; i++) batch.push(RECO_TOPIC_POOL[(recoTopicBatchStart + i) % RECO_TOPIC_POOL.length]);
+        list.innerHTML = batch.map(function (t) {
+            return '<button class="px-2 py-1 bg-white border border-gray-200 text-gray-700 rounded-md text-[10px] font-medium shadow-sm hover:bg-gray-100" onclick="fillTopic(\'' + t + '\')">' + t + '</button>';
+        }).join('');
+    }
+
+    function shuffleRecoTopics() {
+        recoTopicBatchStart = (recoTopicBatchStart + 3) % RECO_TOPIC_POOL.length;
+        renderRecoTopics();
+    }
+
+    function toggleCategorySection() {
+        const body = document.getElementById('cat-section-body');
+        const chevron = document.getElementById('cat-section-chevron');
+        const wasHidden = body.classList.contains('hidden');
+        body.classList.toggle('hidden');
+        chevron.classList.toggle('rotate-180', wasHidden);
+    }
+
+    let topicPrevValue = null;
+    function refineTopicSuggestion() {
+        const input = document.getElementById('topic-input');
+        topicPrevValue = input.value;
+        input.value = input.value + (input.value ? '。' : '') + '請分析其對社會民生的影響。';
+        document.getElementById('topic-undo-btn').classList.remove('hidden');
+    }
+    function undoTopicRefine() {
+        if (topicPrevValue === null) return;
+        document.getElementById('topic-input').value = topicPrevValue;
+        topicPrevValue = null;
+        document.getElementById('topic-undo-btn').classList.add('hidden');
+    }
+    function handleTopicInputEdit() {
+        if (topicPrevValue !== null) {
+            topicPrevValue = null;
+            document.getElementById('topic-undo-btn').classList.add('hidden');
+        }
+    }
+
+    function handleRepeatFreqChange() {
+        const freq = document.getElementById('repeat-freq').value;
+        const wArea = document.getElementById('repeat-weekly-area');
+        const mArea = document.getElementById('repeat-monthly-area');
+
+        wArea.classList.add('hidden'); mArea.classList.add('hidden');
+        if (freq === 'weekly') wArea.classList.remove('hidden');
+        else if (freq === 'monthly') { mArea.classList.remove('hidden'); renderRepeatMonthlyGrid(); }
+
+        document.getElementById('repeat-end-section').classList.toggle('hidden', freq === 'none');
+
+        updateRepeatSummary();
+    }
+
+    function updateRepeatSummary() {
+        const freq = document.getElementById('repeat-freq').value;
+        const freqLabels = { none: '不重複', daily: '每天', weekly: '每週', monthly: '每月', yearly: '每年' };
+        let text = freqLabels[freq] || '每週';
+        if (freq === 'weekly') {
+            const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+            const picked = [];
+            for (let i = 0; i <= 6; i++) {
+                const cb = document.getElementById('repeat-day-' + i);
+                if (cb && cb.checked) picked.push(dayNames[i]);
+            }
+            if (picked.length) text += '・週' + picked.join('、');
+        } else if (freq === 'monthly') {
+            const picked = Array.from(document.querySelectorAll('#repeat-monthly-grid .bg-black')).map(function (el) { return el.textContent; });
+            if (picked.length) text += '・' + picked.join('、') + '號';
+        } else if (freq === 'yearly') {
+            const dateInput = document.getElementById('schedule-date-input').value;
+            if (dateInput) {
+                const parts = dateInput.split('-');
+                text += '（' + Number(parts[1]) + '月' + Number(parts[2]) + '日）';
+            }
+        }
+        document.getElementById('repeat-summary-text').innerText = text;
+    }
+
+    function rollPastDateForward(y, m, day) {
+        const d = new Date(y, m, day);
+        const today = new Date(CAL_TODAY.y, CAL_TODAY.m, CAL_TODAY.d);
+        if (d < today) d.setDate(d.getDate() + 7);
+        return d;
+    }
+
+    function renderRepeatMonthlyGrid() {
+        const grid = document.getElementById('repeat-monthly-grid');
+        const dateInput = document.getElementById('schedule-date-input').value;
+        const defaultDay = dateInput ? Number(dateInput.split('-')[2]) : 1;
+        let html = '';
+        for (let d = 1; d <= 31; d++) {
+            const isSel = d === defaultDay;
+            html += '<button type="button" onclick="toggleRepeatMonthlyDay(' + d + ')" class="repeat-month-day py-2 text-base rounded ' + (isSel ? 'bg-black text-white font-bold' : 'text-gray-800') + '">' + d + '</button>';
+        }
+        grid.innerHTML = html;
+    }
+    function toggleRepeatMonthlyDay(d) {
+        const btn = Array.from(document.querySelectorAll('.repeat-month-day')).find(function (b) { return Number(b.textContent) === d; });
+        const isSel = btn.classList.toggle('bg-black');
+        btn.classList.toggle('text-white', isSel);
+        btn.classList.toggle('font-bold', isSel);
+        btn.classList.toggle('text-gray-800', !isSel);
+        updateRepeatSummary();
+    }
+
+    function toggleRepeatEndOptions() {
+        const on = document.getElementById('repeat-end-toggle').checked;
+        document.getElementById('repeat-end-options').classList.toggle('hidden', !on);
+    }
+
+    const SOURCE_DB = {
+        '通勤總經快訊': ['道瓊指數創歷史新高，科技股領漲', 'Fed 官員談話透露降息訊號', '美元指數走弱，新興市場資金回流'],
+        '科技早報': ['台積電法說會：2 奈米量產時程曝光', 'AI 新創募資動向：東南亞資金加碼'],
+        '晚間國際新聞回顧': ['中東情勢牽動油價，布蘭特原油走高', '美國總統大選首場辯論，經濟政策交鋒'],
+        '輝達財報開獎分析': ['輝達 Q3 財報擊敗預期，資料中心營收創新高', 'AI 晶片龍頭營收翻倍，盤後股價小幅震盪'],
+        'OpenAI o1 模型深度解析': ['OpenAI 發表 o1 模型，具備強大推理能力'],
+        '蘋果秋季發表會': ['蘋果發表會邀請函釋出，外界揣測新機陣容', '供應鏈傳出新款晶片備貨動態'],
+        '全球降息啟動': ['全球央行啟動降息循環，資金板塊挪移', '聯準會宣布降息兩碼，帶動全球股債市波動'],
+        'OpenAI 開發者大會回顧': ['OpenAI 發表最新 o1 模型，具備強大推理能力'],
+        '台積電法說會重點整理': ['台積電法說會：2 奈米量產時程曝光'],
+        '每週科技趨勢統整': ['科技巨頭發布最新產品，市場反應熱烈']
+    };
+
+    function playEpisode(title, meta, source) {
+        document.getElementById('now-playing-title').textContent = title;
+        document.getElementById('player-title').textContent = title;
+        document.getElementById('player-subtitle').textContent = meta;
+        
+        const sources = SOURCE_DB[title] || [];
+        const sourcesContainer = document.getElementById('player-tab-sources');
+        if (sources.length > 0) {
+            sourcesContainer.innerHTML = sources.map(function(s) {
+                const url = 'https://www.google.com/search?q=' + encodeURIComponent(s) + '&tbm=nws';
+                return '<a href="' + url + '" target="_blank" rel="noopener" class="block bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-gray-300 transition-colors">' +
+                       '<h5 class="text-sm font-bold text-gray-900 mb-1 leading-snug">' + s + '</h5>' +
+                       '<p class="text-[10px] text-gray-500"><i class="fa-solid fa-link"></i> 點擊閱讀原文</p>' +
+                       '</a>';
+            }).join('');
+        } else {
+            sourcesContainer.innerHTML = '<p class="text-sm text-gray-400 p-4 text-center">本集無特定參考來源</p>';
+        }
+
+        document.getElementById('now-playing-progress').style.width = '4%';
+        document.getElementById('player-scrub').value = 4;
+        document.getElementById('now-playing-banner').classList.remove('hidden');
+        
+        const favBtn = document.getElementById('player-fav-btn');
+        favBtn.dataset.title = title;
+        const isFav = FAVORITES.has(title);
+        favBtn.classList.toggle('text-pink-500', isFav);
+        favBtn.classList.toggle('text-gray-300', !isFav);
+        document.getElementById('player-menu').classList.add('hidden');
+        openModal('modal-player');
+    }
+    
+    function togglePlayerMenu(evt) {
+        evt.stopPropagation();
+        document.getElementById('player-menu').classList.toggle('hidden');
+    }
+    
+    function playerMenuAction(msg) {
+        document.getElementById('player-menu').classList.add('hidden');
+        showToast(msg);
+    }
+    
+    // 分享複製連結
+    function sharePodcast() {
+        document.getElementById('player-menu').classList.add('hidden');
+        const dummy = document.createElement('input');
+        document.body.appendChild(dummy);
+        dummy.value = window.location.href + "?episode=123";
+        dummy.select();
+        document.execCommand('copy');
+        document.body.removeChild(dummy);
+        showToast('已複製分享連結');
+    }
+
+    // 播放速度循環
+    let currentSpeedIdx = 0;
+    const speeds = ['1.0x', '1.2x', '1.5x', '2.0x'];
+    function cyclePlaybackSpeed(evt) {
+        evt.stopPropagation();
+        currentSpeedIdx = (currentSpeedIdx + 1) % speeds.length;
+        document.getElementById('playback-speed-val').innerText = speeds[currentSpeedIdx];
+    }
+
+    document.addEventListener('click', function (evt) {
+        const menu = document.getElementById('player-menu');
+        if (menu && !menu.classList.contains('hidden') && !menu.contains(evt.target)) {
+            menu.classList.add('hidden');
+        }
+    });
+    
+    function dismissNowPlaying() {
+        document.getElementById('now-playing-banner').classList.add('hidden');
+    }
+    
+    function syncPlayerProgress(value) {
+        document.getElementById('now-playing-progress').style.width = value + '%';
+    }
+
+    function toggleSources(id) {
+        const panel = document.getElementById(id);
+        const wasOpen = !panel.classList.contains('hidden');
+        document.querySelectorAll('[id^="src-"]').forEach(p => p.classList.add('hidden'));
+        if (!wasOpen) panel.classList.remove('hidden');
+    }
+
+    function switchPlayerTab(tab) {
+        const tBtn = document.getElementById('btn-tab-transcript'), sBtn = document.getElementById('btn-tab-sources');
+        const tView = document.getElementById('player-tab-transcript'), sView = document.getElementById('player-tab-sources');
+        if(tab==='transcript') {
+            tBtn.className = "pb-2 flex-1 font-bold text-sm text-gray-900 border-b-2 border-black"; sBtn.className = "pb-2 flex-1 font-bold text-sm text-gray-400";
+            tView.classList.remove('hidden'); sView.classList.add('hidden');
+        } else {
+            sBtn.className = "pb-2 flex-1 font-bold text-sm text-gray-900 border-b-2 border-black"; tBtn.className = "pb-2 flex-1 font-bold text-sm text-gray-400";
+            sView.classList.remove('hidden'); tView.classList.add('hidden');
+        }
+    }
+
+    function openNewsPicker() {
+        updateNewsCount();
+        openModal('modal-news-picker');
+    }
+
+    function filterNews(category, btnElement) {
+        document.querySelectorAll('.news-tab').forEach(btn => {
+            btn.className = "news-tab px-4 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold transition-colors";
+        });
+        btnElement.className = "news-tab active px-4 py-1.5 bg-black text-white rounded-full text-xs font-bold transition-colors";
+
+        const items = document.querySelectorAll('.news-item');
+        items.forEach(item => {
+            if (category === 'all' || item.getAttribute('data-category') === category) {
+                item.style.display = 'flex';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+    }
+
+    const NEWS_PICKER_MIN = 5;
+    function updateNewsCount() {
+        const count = document.querySelectorAll('.news-checkbox:checked').length;
+        const btn = document.getElementById('btn-confirm-news');
+        btn.innerText = `確認選取（${count}）篇`;
+
+        if (count > 0) {
+            btn.classList.add('shadow-lg', 'bg-black');
+            btn.classList.remove('bg-gray-400');
+        } else {
+            btn.classList.add('bg-gray-400');
+            btn.classList.remove('shadow-lg', 'bg-black');
+        }
+    }
+
+    function confirmNewsSelection() {
+        const allBoxes = Array.from(document.querySelectorAll('.news-checkbox'));
+        const checkedBoxes = allBoxes.filter(function (b) { return b.checked; });
+        if (checkedBoxes.length === 0) {
+            showToast('請至少選擇一篇新聞');
+            return;
+        }
+
+        const kept = checkedBoxes.map(function (b) { return b.value; });
+        const remaining = allBoxes.filter(function (b) { return !b.checked; }).map(function (b) { return b.value; });
+        const need = Math.max(0, NEWS_PICKER_MIN - kept.length);
+        const fresh = remaining.slice(0, need);
+
+        // 新換的項目不再自動勾選
+        chatArticleState = { checked: new Set(kept), kept: kept, fresh: fresh, cursor: 0 };
+        currentEpisodeTopic = kept[0] || fresh[0] || '';
+
+        closeModal('modal-news-picker');
+        
+        // 隱藏挑選新聞捷徑
+        document.getElementById('news-picker-shortcut').classList.add('hidden');
+
+        const chatContainer = document.getElementById('chat-messages');
+        const titlesHtml = kept.map(t => `• ${t}`).join('<br>');
+        const userBubble = `
+            <div class="flex items-end justify-end">
+                <div class="bg-black text-white p-3 rounded-2xl rounded-tr-none shadow-sm text-sm font-medium">
+                    我挑選了 ${kept.length} 篇新聞素材：<br>
+                    <span class="text-xs text-gray-100 mt-1 block leading-relaxed">${titlesHtml}</span>
+                </div>
+            </div>
+        `;
+        chatContainer.insertAdjacentHTML('beforeend', userBubble);
+
+        setTimeout(() => {
+            const pickerHtml = renderChatArticlePickerHtml();
+            const introText = fresh.length > 0
+                ? '幫你把選的文章跟系統補的其他文章一起列出來，湊到至少 5 篇，不想要的可以取消勾選或換一批：'
+                : '收到！確認一下要用的文章：';
+            const aiBubble = `
+                <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center shadow flex-shrink-0 text-sm"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+                    <div class="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm border border-gray-100 text-gray-800 text-sm font-medium flex-1">
+                        ${introText}
+                        ${pickerHtml}
+                    </div>
+                </div>
+            `;
+            chatContainer.insertAdjacentHTML('beforeend', aiBubble);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }, 600);
+    }
+
+    const CHAT_ARTICLE_POOL = [
+        '國際情勢牽動市場，投資人觀望氣氛濃厚', '科技巨頭發布最新產品，市場反應熱烈',
+        '運動賽事開打，各方戰績受矚目', '產業龍頭公布財報，數字優於預期',
+        '政策動向牽動民生議題討論', '影視作品掀起討論熱潮',
+        '國際盤勢波動，專家分析後市', '新創公司募資消息曝光',
+        '地方新聞引發廣泛關注', '專家預測未來趨勢走向',
+        '海外市場動態牽動本地產業', '重磅人物專訪內容曝光',
+        '消費市場動能回升，零售業者樂觀看待', '新興科技應用場景持續擴大',
+        '國際供應鏈重組，廠商加速布局', '產業轉型議題受到高度關注',
+        '公共政策辯論延燒，各界看法分歧', '文化活動吸引大批民眾參與',
+        '金融市場波動，投資策略成焦點', '社會議題引發熱烈討論',
+    ];
+    const CHAT_ARTICLE_MIN = 5;
+    let chatArticleState = null;
+
+    function startChatArticlePicker() {
+        const initial = CHAT_ARTICLE_POOL.slice(0, CHAT_ARTICLE_MIN);
+        chatArticleState = { checked: new Set(initial), kept: initial.slice(), fresh: [], cursor: CHAT_ARTICLE_MIN };
+        return renderChatArticlePickerHtml();
+    }
+
+    function chatArticleRowHtml(title) {
+        const checked = chatArticleState.checked.has(title);
+        return '<label class="flex items-start gap-2 py-2 border-b border-gray-50 last:border-0 cursor-pointer">'
+            + '<input type="checkbox" class="chat-article-cb mt-0.5 w-4 h-4 accent-gray-900" data-title="' + title.replace(/"/g, '&quot;') + '" ' + (checked ? 'checked' : '') + ' onchange="onChatArticleToggle(this)">'
+            + '<span class="text-xs text-gray-700 flex-1">' + title + '</span></label>';
+    }
+
+    function renderChatArticlePickerHtml() {
+        const keptRows = chatArticleState.kept.map(chatArticleRowHtml).join('');
+        const freshRows = chatArticleState.fresh.length
+            ? '<p class="text-[10px] text-gray-400 font-bold border-t border-gray-100 pt-2 mt-1 mb-0.5">新換的</p>' + chatArticleState.fresh.map(chatArticleRowHtml).join('')
+            : '';
+        return '<div id="chat-article-picker" class="mt-3 bg-white border border-gray-100 rounded-xl p-3">'
+            + '<div class="flex justify-between items-center mb-1">'
+            + '<span id="chat-article-count" class="text-[11px] font-bold text-gray-500">已勾選 ' + chatArticleState.checked.size + ' 篇（至少需要 ' + CHAT_ARTICLE_MIN + ' 篇）</span>'
+            + '<button type="button" class="chat-article-shuffle-btn text-[10px] text-gray-900 border border-gray-200 bg-white px-2 py-0.5 rounded shadow-sm" onclick="shuffleChatArticles()">換一批</button>'
+            + '</div>'
+            + '<div>' + keptRows + freshRows + '</div>'
+            + '<button id="chat-article-continue-btn" type="button" class="mt-3 w-full bg-black text-white font-bold py-2 rounded-xl flex justify-center items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed" ' + (chatArticleState.checked.size >= CHAT_ARTICLE_MIN ? '' : 'disabled') + ' onclick="proceedFromChatArticles()">'
+            + '<i class="fa-solid fa-arrow-right"></i> 開始選擇風格與詳細程度</button>'
+            + '</div>';
+    }
+
+    function onChatArticleToggle(cb) {
+        const title = cb.dataset.title;
+        if (cb.checked) chatArticleState.checked.add(title); else chatArticleState.checked.delete(title);
+        const n = chatArticleState.checked.size;
+        document.getElementById('chat-article-count').textContent = '已勾選 ' + n + ' 篇（至少需要 ' + CHAT_ARTICLE_MIN + ' 篇）';
+        document.getElementById('chat-article-continue-btn').disabled = n < CHAT_ARTICLE_MIN;
+    }
+
+    const SHUFFLE_BATCH_SIZE = 5;
+    function shuffleChatArticles() {
+        const all = chatArticleState.kept.concat(chatArticleState.fresh);
+        const stillWanted = all.filter(function (t) { return chatArticleState.checked.has(t); });
+        const newFresh = [];
+        for (let i = 0; i < SHUFFLE_BATCH_SIZE; i++) {
+            let next, guard = 0;
+            do {
+                next = CHAT_ARTICLE_POOL[chatArticleState.cursor % CHAT_ARTICLE_POOL.length];
+                chatArticleState.cursor++;
+                guard++;
+            } while ((stillWanted.includes(next) || newFresh.includes(next)) && guard < CHAT_ARTICLE_POOL.length * 3);
+            newFresh.push(next);
+            // 新換的不再自動勾選
+        }
+        chatArticleState.kept = stillWanted;
+        chatArticleState.fresh = newFresh;
+        const container = document.getElementById('chat-article-picker');
+        if (container) container.outerHTML = renderChatArticlePickerHtml();
+    }
+
+    function proceedFromChatArticles() {
+        if (!chatArticleState || chatArticleState.checked.size < CHAT_ARTICLE_MIN) return;
+        showSingleParams();
+    }
+
+    let currentEpisodeTopic = '';
+
+    const CHAT_WELCOME_HTML = `
+        <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center shadow flex-shrink-0 text-sm"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+            <div class="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm border border-gray-100 text-gray-800 text-sm font-medium">
+                嗨，Demo！準備好製作新的 Podcast 了嗎？告訴我你今天想聽些什麼主題，或是直接從今日新聞庫挑選素材。
+            </div>
+        </div>
+    `;
+    function resetChatModal() {
+        const chatMessages = document.getElementById('chat-messages');
+        if (chatMessages) chatMessages.innerHTML = CHAT_WELCOME_HTML;
+        const topicInput = document.getElementById('chat-topic-input');
+        if (topicInput) topicInput.value = '';
+        chatArticleState = null;
+        currentEpisodeTopic = '';
+        const newsShortcut = document.getElementById('news-picker-shortcut');
+        if (newsShortcut) newsShortcut.classList.remove('hidden');
+    }
+
+    function sendChatMessage() {
+        const input = document.getElementById('chat-topic-input');
+        const text = input.value.trim();
+        if (!text) return;
+        currentEpisodeTopic = text;
+        document.getElementById('news-picker-shortcut').classList.add('hidden');
+
+        const chatContainer = document.getElementById('chat-messages');
+        const userBubble = `
+            <div class="flex items-end justify-end">
+                <div class="bg-black text-white p-3 rounded-2xl rounded-tr-none shadow-sm text-sm font-medium">${text}</div>
+            </div>
+        `;
+        chatContainer.insertAdjacentHTML('beforeend', userBubble);
+        input.value = '';
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+
+        setTimeout(() => {
+            const pickerHtml = startChatArticlePicker();
+            const aiBubble = `
+                <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center shadow flex-shrink-0 text-sm"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+                    <div class="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm border border-gray-100 text-gray-800 text-sm font-medium flex-1">
+                        幫你在文章庫裡找了幾篇跟「${text}」相關的內容，要立即開始製作專屬你的 Podcast 嗎？
+                        ${pickerHtml}
+                    </div>
+                </div>
+            `;
+            chatContainer.insertAdjacentHTML('beforeend', aiBubble);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }, 600);
+    }
+
+    function startGenerationFlow() {
+        const title = currentEpisodeTopic ? currentEpisodeTopic + ' 相關單集' : '新單集';
+        const row = '<div class="flex items-stretch gap-3 cursor-pointer opacity-70">'
+            + '<div class="w-1 rounded-full bg-gray-300 flex-shrink-0"></div>'
+            + '<div class="flex-1 min-w-0 bg-gray-50 rounded-xl p-3 flex items-center justify-between">'
+            + '<div class="min-w-0"><span class="text-[10px] text-gray-400 font-bold"><i class="fa-solid fa-circle-notch fa-spin"></i> 生成中</span>'
+            + '<h4 class="font-bold text-sm text-gray-500 truncate mt-0.5">' + title + '</h4></div></div></div>';
+        const list = document.getElementById('home-single-list');
+        if (list) list.insertAdjacentHTML('beforeend', row);
+
+        resetChatModal();
+        closeModal('modal-unified-create');
+        showToast("正在為您生成 Podcast...");
+        switchTab('home');
+    }
+
+    initFolderCounts();
+    populateCalYearSelect();
+    renderCalMonthLabel();
+    renderCalMonthGrid();
+    selectCalDay(24, 2026, 8);
+</script>
+</body>
 </html>
